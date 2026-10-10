@@ -80,3 +80,7 @@ IOTSTORE_URL=https://<your API> IOTSTORE_EMAIL=me@example.com iotdash publish --
 
 Boards are offered the newest published version whose `os.min` (from the app's `app.json`) is not
 newer than their OS.
+
+## License
+
+MIT, like the rest of the iotdash SDK (`../LICENSE`).

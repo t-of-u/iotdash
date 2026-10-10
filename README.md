@@ -39,3 +39,9 @@ iotdash publish --store https://…             # ขึ้น iotstore
 เอกสาร: [ติดตั้งและใช้งานครั้งแรก](docs/guide/getting-started.html) ·
 [เขียนแอป](docs/guide/app-development.html) · [command line](docs/reference/cli.html) ·
 [JavaScript API](docs/reference/js-api.html) · [ข้อจำกัดที่รู้](docs/project/known-issues.html)
+
+## License
+
+[MIT](LICENSE) ทั้ง SDK และ store ส่วนที่มาจากโปรเจกต์อื่นใช้ license ของตัวเอง: QuickJS-ng
+([MIT](lib/quickjs/LICENSE)) และฟอนต์ Inter, Noto Sans Thai, JetBrains Mono
+([SIL OFL 1.1](tools/fonts)) แอปที่สร้างด้วย SDK เป็นของผู้เขียน จะใช้ license อะไรก็ได้
