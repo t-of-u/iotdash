@@ -5,9 +5,8 @@ HTML/CSS/JS บนชิปเอง, OS (home, Settings, Apps store, Wi-Fi, Blu
 เบราว์เซอร์ และเครื่องมือ command line `iotdash` แบบเดียวกับ Flutter: แอปเป็นโปรเจกต์ของคุณ อยู่ที่ไหนก็ได้
 
 ```sh
-scripts/setup.sh                              # ครั้งแรก: Python tools + Chromium, ภาพระบบ, simulator
-export PATH="$PATH:$PWD/bin"                  # ใส่ใน ~/.zshrc
-iotdash doctor
+scripts/setup.sh                              # ครั้งแรก: Python tools + Chromium, ภาพระบบ, simulator, ใส่ bin/ ใน PATH
+iotdash doctor                                # (ใน terminal ใหม่)
 
 iotdash create ~/projects/hello && cd ~/projects/hello
 iotdash run                                   # simulator

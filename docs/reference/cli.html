@@ -16,8 +16,7 @@
 <div id="toc"></div>
 
 <h2 id="setup">ติดตั้ง</h2>
-<pre><code>cd iotdash && scripts/setup.sh          <span class="c"># ครั้งแรก (--web, --firmware: ส่วนเสริม)</span>
-export PATH="$PATH:/path/to/iotdash/bin"  <span class="c"># ใส่ใน ~/.zshrc</span>
+<pre><code>cd iotdash && scripts/setup.sh          <span class="c"># ครั้งแรก (--web, --firmware: ส่วนเสริม) และใส่ bin/ ใน PATH ให้ (--no-path: ไม่ต้อง)</span>
 iotdash doctor                           <span class="c"># ตรวจเครื่องมือทั้งหมด</span>
 iotdash --version                        <span class="c"># OS ของ SDK และที่อยู่</span></code></pre>
 <p><code>bin/iotdash</code> ตามลิงก์ไปหา SDK เอง (ลิงก์ไว้ใน <code>/usr/local/bin</code> ก็ได้) และสร้าง <code>tools/.venv</code> ให้ในครั้งแรก ต้องมี: Python 3.11+, CMake + compiler C++ (SDL2 สำหรับหน้าต่างของ simulator), PlatformIO สำหรับ firmware, Emscripten สำหรับ <code>run --web</code></p>

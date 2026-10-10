@@ -26,7 +26,7 @@
 <pre><code><span class="c"># ครั้งแรก: เครื่องมือ Python + Chromium, ภาพระบบ, simulator แล้วตรวจทั้งหมด</span>
 cd iotdash
 scripts/setup.sh                 <span class="c"># --web: build สำหรับเบราว์เซอร์ด้วย, --firmware: firmware ด้วย</span>
-echo 'export PATH="$PATH:'$PWD'/bin"' &gt;&gt; ~/.zshrc   <span class="c"># แล้วเปิด terminal ใหม่</span>
+                                 <span class="c"># ใส่ bin/ ใน PATH ให้ (~/.zshrc, ~/.bash_profile หรือ fish) แล้วเปิด terminal ใหม่</span>
 iotdash doctor                   <span class="c"># ✓ ครบ = พร้อม</span></code></pre>
 <div class="note"><p><code>bin/iotdash</code> ใช้ Python ใน <code>tools/.venv</code> ของ SDK เสมอ (สร้างให้เองครั้งแรก) จึงไม่ต้องสนใจ Python ของระบบหรือของ PlatformIO <code>iotdash --version</code> บอกว่า SDK อยู่ที่ไหน</p></div>
 
