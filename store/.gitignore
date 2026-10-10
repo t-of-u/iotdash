@@ -1,0 +1,16 @@
+# a store's own settings and what deploying makes (deploy.env.example is the template)
+deploy.env
+*.deploy.env
+.deploy/
+# backend: local Python, data, secrets
+backend/.venv/
+backend/.data/
+backend/.env.local
+__pycache__/
+.pytest_cache/
+# frontend
+frontend/node_modules/
+frontend/dist/
+frontend/public/iotdash/
+frontend/*.tsbuildinfo
+.DS_Store

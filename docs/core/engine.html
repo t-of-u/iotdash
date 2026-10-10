@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rendering engine — iotdash docs</title>
+<link rel="stylesheet" href="../assets/docs.css">
+<script src="../assets/nav.js" defer></script>
+</head>
+<body>
+<nav id="sidebar"></nav>
+<main>
+<div class="crumb">แกนระบบ (core)</div>
+<h1>Rendering engine</h1>
+<p class="lead">engine HTML/CSS/JS ที่เขียนเองทั้งหมดใน <code>lib/rt/</code> (~21,000 บรรทัด C++): parse HTML, cascade CSS, layout (block, inline, flex, grid, table), วาดเฉพาะส่วนที่เปลี่ยน, animation, form control, SVG, canvas, font ที่ rasterize ไว้ล่วงหน้าพร้อมรองรับภาษาไทย
+โค้ดเดียวกันรันทั้งบนบอร์ดและใน simulator</p>
+<div id="toc"></div>
+
+<h2 id="modules">โมดูล</h2>
+<table>
+<tr><th>ไฟล์</th><th>หน้าที่</th></tr>
+<tr><td><code>engine.h/.cpp</code></td><td>วงจรเฟรม, โหลดหน้า, invalidation, damage, transition, stats</td></tr>
+<tr><td><code>html.h/.cpp</code></td><td>HTML parser แบบทนข้อผิดพลาด (tree building ของ HTML5 พอสำหรับ markup ของแอป), serializer (<code>innerHTML</code>/<code>outerHTML</code>)</td></tr>
+<tr><td><code>dom.h/.cpp</code></td><td>DOM tree, reference counting (node ที่ถูกถอดยังอยู่ถ้า JS ถืออยู่), สถานะ interaction (<code>:hover</code>, <code>:active</code>, <code>:focus</code>, …)</td></tr>
+<tr><td><code>css.h/.cpp</code>, <code>css_select.cpp</code></td><td>tokenizer, ค่า, shorthand, <code>calc()</code>, selector matching</td></tr>
+<tr><td><code>style.h/.cpp</code></td><td>cascade, computed style, custom property (<code>var()</code>), rule index</td></tr>
+<tr><td><code>layout.h/.cpp</code></td><td>block flow, inline (ตัดบรรทัด), flexbox, grid, table, positioned, scroll container, partial relayout</td></tr>
+<tr><td><code>render.h/.cpp</code></td><td>ลำดับการวาด (stacking context), วาดลง band, hit test, เก็บ damage</td></tr>
+<tr><td><code>raster.h/.cpp</code></td><td>primitive: สี่เหลี่ยมมุมมน, border, gradient, shadow (mask cache), blit รูปและ glyph</td></tr>
+<tr><td><code>font.h/.cpp</code>, <code>thai.h/.cpp</code></td><td>atlas FNT1, shaping, kerning, ตำแหน่งสระ/วรรณยุกต์ไทย, ตัดคำไทย</td></tr>
+<tr><td><code>anim.h/.cpp</code></td><td>CSS transition, <code>@keyframes</code>, <code>Element.animate()</code></td></tr>
+<tr><td><code>input.h/.cpp</code></td><td>pointer/touch/mouse/click, <code>:active</code>, scroll ลาก + momentum + snap, slider, swipe-back</td></tr>
+<tr><td><code>widgets.h/.cpp</code></td><td>form control, คีย์บอร์ดบนจอ (ไทย Kedmanee / English / ตัวเลข), popup ของ <code>&lt;select&gt;</code>, date/time/color picker</td></tr>
+<tr><td><code>svg.h/.cpp</code>, <code>canvas2d.h/.cpp</code>, <code>layer.h/.cpp</code></td><td>inline SVG, canvas 2D, cache ของ pixel สำหรับ canvas/svg</td></tr>
+<tr><td><code>js.h/.cpp</code>, <code>bootstrap_js.h</code></td><td>QuickJS host, Web API (ดู <a href="js-runtime.html">JavaScript runtime</a>)</td></tr>
+<tr><td><code>os.h/.cpp</code></td><td>ชั้น OS (ดู <a href="../concepts/os.html">iotdash OS</a>)</td></tr>
+<tr><td><code>prof.h/.cpp</code>, <code>microbench.*</code></td><td>profiler ตาม section และ micro-benchmark</td></tr>
+</table>
+
+<h2 id="frame">วงจรของหนึ่ง tick</h2>
+<p><code>Engine::update()</code> ถูกเรียกจาก engine loop (core 1) หลังส่ง touch เข้ามาแล้ว แต่ละขั้นตั้ง <code>gPhase</code> ไว้ เพื่อให้ตัววัด tear บอกได้ว่าเกิดระหว่างขั้นไหน</p>
+<ol>
+  <li>ตั้ง JS watchdog (<code>kScriptWatchdogMs</code> = 3000), <code>pollAsync()</code> (ผล fetch), งานที่ถูก post ไว้ <span class="tag">script</span></li>
+  <li><code>Os::tick()</code>: boot step, งาน deferred, โหลด app image, ซ่อนแถบล่าง, flush memory.json <span class="tag">os</span></li>
+  <li><code>input_-&gt;tick()</code> (momentum scroll), <code>widgets_-&gt;tick()</code>, <code>js_-&gt;tick()</code> (timer, background process ภายใต้งบ 10 ms) <span class="tag">script</span></li>
+  <li>เปิดหน้าที่รออยู่ (<code>openLater</code>) <span class="tag">load</span></li>
+  <li>เดิน animation และเขียนค่าลง computed style <span class="tag">layout</span></li>
+  <li>ถ้าไม่มีอะไรเปลี่ยน → คืน false (loop จะหลับรอ touch หรือ timer สูงสุด 16 ms)</li>
+  <li><code>requestAnimationFrame</code> callbacks</li>
+  <li><code>render()</code>: style → layout → build display list → เก็บ damage → วาด band → present หรือ transition <span class="tag">paint</span></li>
+</ol>
+
+<h2 id="invalidation">Invalidation: ทำงานเท่าที่จำเป็น</h2>
+<h3>Style</h3>
+<ul>
+  <li>flag ต่อ node: <code>NF_STYLE_DIRTY</code> (ตัวเอง), <code>NF_SUBTREE_STYLE</code> (ทั้ง subtree), <code>NF_DESC_STYLE_DIRTY</code> (มีลูกหลานที่ dirty) restyle เดินเฉพาะเส้นทางที่ dirty</li>
+  <li><code>StyleEngine::rebuildIndex()</code> แบ่ง rule ตาม id/class/tag/universal และตรวจ stylesheet ทั้งหมดว่า:
+    <ul>
+      <li>มี sibling combinator (<code>+</code>, <code>~</code>) หรือ <code>:has()</code> ไหม → <code>gSiblingSelectors</code></li>
+      <li>มี pseudo-class / <code>:not()</code> / <code>:is()</code> บน compound ที่ไม่ใช่ตัวสุดท้าย (เช่น <code>.row:active .label</code>) หรือ <code>:has()</code> ไหม → <code>gStateDescendants</code></li>
+    </ul>
+  </li>
+  <li><code>Element::setState()</code> (เช่นกดปุ่ม → <code>:active</code>) mark เฉพาะ element นั้น และ mark subtree/พี่น้องถัดไปก็ต่อเมื่อ flag ข้างบนบอกว่ามี selector ที่ขึ้นกับมัน</li>
+  <li><code>inheritedDiffers</code> เทียบ custom property (<code>--x</code>) ด้วยค่า ไม่ใช่ pointer (เดิมเทียบ pointer ทำให้ถือว่าเปลี่ยนทุกครั้ง ลูกทั้งหมดถูก restyle)</li>
+</ul>
+<div class="ok"><p>ผลบน Calculator: กดปุ่มหนึ่งครั้งจาก restyle 59–73 element ใช้ 49–74 ms เหลือ <b>4 element ใช้ 4 ms</b></p></div>
+<p>ผลของ <code>StyleDiff</code> ที่ได้จากการเทียบ style เก่า/ใหม่: <code>SD_PAINT</code> (วาดใหม่), <code>SD_LAYOUT</code> (layout ใหม่), <code>SD_STACKING</code> (สร้าง display list ใหม่), <code>SD_TEXT</code></p>
+
+<h3 id="relayout">Layout แบบบางส่วน (relayout boundary)</h3>
+<p>เมื่อ element หนึ่งต้อง layout ใหม่ engine หา <b>boundary</b> ที่ใกล้ที่สุด แล้ว layout เฉพาะกล่องนั้น ถ้าขนาดภายนอก (w, h, baseline, margin, scroll size, ตำแหน่ง relative) ออกมาเท่าเดิม ก็จบแค่นั้น ถ้าไม่เท่า ขยับขึ้นไป boundary ชั้นถัดไป จนถึง <code>&lt;html&gt;</code> (layout ทั้งหน้า)</p>
+<table>
+<tr><th>Boundary</th><th>เงื่อนไข</th></tr>
+<tr><td>Block ใน block</td><td>block-level ใน flow ภายใน block/list-item/flow-root/inline-block/table-cell และความกว้างของตัวเองกับบรรพบุรุษทุกชั้นมาจาก containing block (ไม่ใช่ shrink-to-fit)</td></tr>
+<tr><td>Flex item ขนาดตายตัว (<code>fixedFlexItem</code>)</td><td>ไม่ grow, <code>flex-basis: auto</code>, main size เป็น px ที่ได้ตามที่กำหนดจริง (ไม่ถูก shrink), cross size เป็น px หรือ stretch ใน container แบบ nowrap</td></tr>
+</table>
+<p>ถ้ามีกล่อง absolute ที่อ้างถึงสิ่งที่อยู่นอก boundary จะถอยไป layout ทั้งหน้า</p>
+<div class="ok"><p>ผลบน Calculator (flex/grid เกือบทั้งหน้า): layout ต่อการกดจาก 24–39 ms เหลือ <b>2 ms</b> เพราะช่องแสดงผลเป็น flex item ขนาดตายตัว</p></div>
+<p>ใน stats: <code>layout X ms [full]</code> หรือ <code>[part]</code> และตรวจความถูกต้องใน simulator ด้วย <code>RT_CHECK_LAYOUT=1</code> หรือคำสั่ง <code>layoutcheck</code> (เทียบผล partial กับ full)</p>
+
+<h3>Paint และ damage</h3>
+<p>element ที่ paint-dirty ถูกเก็บใน <code>paintDirty_</code> renderer รวบรวมกรอบเก่าและใหม่ของมันเป็น damage แล้ว merge/align (ดู <a href="display.html#damage">การแสดงผล</a>) element inline ถูกวาดโดย block container ของมัน จึง mark container ด้วย</p>
+
+<h2 id="layout">Layout ที่รองรับ</h2>
+<table>
+<tr><th>หมวด</th><th>รองรับ</th></tr>
+<tr><td>display</td><td>block, inline, inline-block, flex, inline-flex, grid, inline-grid, table และส่วนย่อยทั้งหมด, list-item, contents, flow-root, none</td></tr>
+<tr><td>position</td><td>static, relative, absolute, fixed, sticky</td></tr>
+<tr><td>Flexbox</td><td>direction, wrap, grow/shrink/basis, justify/align-items/self/content, gap, order, single-line ที่ถูก clamp ด้วย min/max-height ของ container (CSS Flexbox §9.4 ขั้น 8)</td></tr>
+<tr><td>Grid</td><td>template rows/columns, <code>fr</code>, repeat, gap, auto-flow (row/column/dense), line placement</td></tr>
+<tr><td>Box</td><td>box-sizing, min/max, margin auto, overflow (visible/hidden/scroll/auto/clip), aspect ratio ของรูป, object-fit</td></tr>
+<tr><td>Text</td><td>white-space ทุกค่า, text-align รวม justify, text-transform, text-overflow ellipsis, word-break, overflow-wrap, line-height, letter-spacing, vertical-align, text-decoration, list-style (รวม <code>thai</code>)</td></tr>
+<tr><td>หน่วย</td><td>px, em, rem, %, vw, vh, <code>calc()</code> (บวก/ลบรวมเป็นผลรวมเชิงเส้นของหน่วย)</td></tr>
+</table>
+<div class="note"><p><b>Bug ที่แก้: flex row ที่มี <code>min-height</code></b> แถว <code>display:flex; align-items:center; min-height:64px</code> เคยจัดกึ่งกลางตามความสูงเนื้อหาแทนความสูงแถว ข้อความจึงเยื้องขึ้น ~12 px ตอนนี้ความสูงของ line ถูก clamp ตาม min/max ของ container (<code>layoutFlex(e, w, h, minContentH, maxContentH)</code>) ตรงกับ Chromium</p></div>
+
+<h2 id="paint">การวาด</h2>
+<ul>
+  <li>วาดทีละ band (แถบแนวนอนใน SRAM) ตามลำดับ stacking context: background, border, เนื้อหา, ลูกที่ position, z-index</li>
+  <li>รองรับ: สีพร้อม alpha, border-radius ทุกมุม, border style ทุกแบบ, linear/radial gradient, box-shadow (outer/inset, blur), opacity, transform 2D (translate/scale/rotate), filter (grayscale, brightness, contrast, invert, opacity, sepia, saturate, blur, drop-shadow, hue-rotate), background-image/size/repeat/position, outline</li>
+  <li>รูป (<code>.img</code>, IMG1) ถูก decode ไว้ใน RAM เป็น RGB565 + alpha; ขนาดถูกย่อตอน build ให้ไม่เกิน 2 เท่าของขนาดที่แสดงจริงใน Chromium</li>
+  <li><b>Canvas 2D</b>: คำสั่งวาดถูกบันทึกเป็น list (path อยู่ในพิกัด canvas แล้ว) และเล่นซ้ำลงทุก band ตอนวาดหน้า CPU ไม่เขียน bitmap ของ canvas ใน PSRAM เลย <code>clearRect()</code> เต็มพื้นที่จะล้าง list; list ที่ยาวมากถูก flatten เป็น bitmap</li>
+  <li><b>SVG</b>: shape ถูกแปลงเป็น path ครั้งเดียว (หน่วย viewBox) แล้ว rasterize ด้วย scanline fill แบบ anti-alias ตัวเดียวกับ canvas ไอคอนจึงคมทุกขนาด <code>fill</code>, <code>stroke</code>, <code>stroke-width</code>, <code>stroke-linecap</code>, <code>stroke-linejoin</code> มาได้ทั้งจาก attribute และ CSS (inherit ลง element ลูก), subpath ที่ไม่ได้ปิดด้วย <code>Z</code> ถูก stroke แบบเปิด (<code>Path::openEnds</code>; canvas ได้ผลเดียวกัน) และ miter limit เป็น 4 ตาม SVG ไอคอนทุกตัวของระบบและ แอปตาชั่ง ถูกเทียบกับ Chromium แล้ว</li>
+  <li><b>Transform</b>: กล่อง, ข้อความ, SVG และ canvas วาดผ่าน matrix ของ element; รูป (<code>&lt;img&gt;</code>) ถูก sample ผ่าน matrix เต็ม (ย่อ/ขยาย/หมุนได้) เงาของกล่องวาดเมื่อ transform มีแค่เลื่อนกับ scale (ย่อขยายตาม) ส่วนที่หมุนหรือ skew ไม่มีเงา</li>
+  <li><b>Layer cache</b> (<code>layer.cpp</code>): canvas/svg ที่วางบนพื้นทึบสีเดียวและไม่มี transform ถูก render เป็น bitmap ครั้งเดียวแล้ว copy ลงทุก band</li>
+  <li>ข้อความ/รูปที่ bitmap ยังไม่อยู่ใน RAM ถูกข้าม (ไม่อ่าน flash ระหว่างวาด)</li>
+</ul>
+
+<h2 id="fonts">Font และภาษาไทย</h2>
+<p>บอร์ดไม่ rasterize font ตอน runtime เครื่องมือ build เปิดทุกหน้าใน Chromium (Playwright) เพื่อวัดว่าใช้ family/weight/size ไหน กับตัวอักษรอะไร แล้วสร้าง atlas (FNT1) ต่อ (family, weight, size)</p>
+<table>
+<tr><th>Family</th><th>Fallback (ตัวที่ไม่มี)</th><th>ชื่อที่ alias มาที่นี่</th></tr>
+<tr><td>Inter</td><td>Noto Sans Thai</td><td>sans-serif, system-ui, -apple-system, Roboto, Helvetica, Arial, serif, Georgia, …</td></tr>
+<tr><td>Noto Sans Thai</td><td>Inter</td><td>–</td></tr>
+<tr><td>JetBrains Mono</td><td>Noto Sans Thai</td><td>monospace, Menlo, Monaco, Consolas, Courier, SF Mono, …</td></tr>
+</table>
+<ul>
+  <li>ขนาด ≤ 34 px ได้ charset เต็ม (ASCII, ไทย, สัญลักษณ์ และทุกตัวในข้อความของแอป) ขนาดใหญ่กว่านั้นได้เฉพาะตัวเลข/ละติน + ตัวที่หน้าใช้จริงที่ขนาดนั้น (+ ไทยทั้งชุดถ้ามีไทย)</li>
+  <li>gamma ของข้อความ 0.72, ขนาดปัดเป็น 0.25 px</li>
+  <li>System image มี atlas ขนาดที่ UI ของระบบใช้ (คีย์บอร์ด, picker, ค่า default) แอปที่ใช้ขนาดเดียวกันไม่ต้องพก atlas เอง (<code>system-fonts.json</code>) รายการขนาดอยู่ใน <a href="../guide/app-development.html#fonts">คู่มือเขียนแอป</a></li>
+  <li><b>ตำแหน่งสระ/วรรณยุกต์ไทย</b>: ตาราง <code>FntThai</code> (base, mark, glyph variant, dx, dy) คำนวณจาก HarfBuzz ตอน build รองรับวรรณยุกต์ซ้อนบนสระบน, สระอำ, ญ/ฐ ที่ตัดหางเมื่อมีสระล่าง</li>
+  <li><b>ตัดคำไทย</b>: ไม่มีช่องว่างระหว่างคำ จึงใช้รายการคำ (<code>thai.dict</code>) ที่ build สร้างจาก segmenter ของ Chromium บนข้อความของแอป แล้วตัดแบบ longest match ข้อความที่ไม่รู้จักจะตัดระหว่าง cluster เมื่อบรรทัดล้น</li>
+  <li><b>font ใน RAM เป็นของ document</b>: ตารางและ glyph ที่คัดลอกจาก flash ถูกปล่อยทุกครั้งที่เปิดหน้าใหม่และเมื่อเปลี่ยนแอป หน้าใหม่โหลดเฉพาะ face ที่ใช้ (≈26 KB ต่อ face) ดู <a href="memory-storage.html#fonts">หน่วยความจำ</a></li>
+  <li>build อ่าน font ของทุก element รวมที่ <code>display: none</code> จึงใช้ element ที่ซ่อนไว้ประกาศขนาด/ตัวอักษรที่ script จะสร้างทีหลังได้</li>
+</ul>
+
+<h2 id="anim">Animation และ transition ของหน้า</h2>
+<ul>
+  <li>CSS <code>transition</code>, <code>@keyframes</code> + <code>animation</code>, <code>Element.animate()</code>: ค่าที่ interpolate ถูกเขียนลง computed style โดยตรงทุกเฟรม (opacity/transform ไม่ต้อง layout)</li>
+  <li>เปลี่ยนหน้า: <code>&lt;a href&gt;</code> ใช้ <code>data-transition</code> (<code>slide</code> ค่าเริ่มต้น, <code>up</code>, <code>down</code>, <code>fade</code>, <code>none</code>) และ <code>data-back</code> / <code>#back</code> สำหรับย้อนกลับ slide ทำใน ISR ของจอ (ดู <a href="display.html#slide">การแสดงผล</a>) ใช้เวลา 320 ms</li>
+</ul>
+
+<h2 id="widgets">Form control และ overlay</h2>
+<p>input (text, number, password, range, checkbox, radio, date, time, color, …), textarea, select, button, progress, meter, details, dialog ทำงานเหมือน browser ส่วนที่ต้องมี UI เพิ่มใช้ overlay ภายใน (DOM ปกติที่ถูก style ด้วย internal CSS):</p>
+<ul>
+  <li>คีย์บอร์ดบนจอ: ไทย (Kedmanee), English, ตัวเลข</li>
+  <li>popup ของ select, date/time/color picker</li>
+</ul>
+<p>ปุ่มจากคีย์บอร์ดบนจอส่ง <code>keydown</code> ไปที่ element ที่ focus ก่อน: handler ที่เรียก <code>preventDefault()</code> ยกเลิกปุ่มนั้นได้ และถ้า handler ย้าย focus (เช่น <kbd>Enter</kbd> = ไปช่องถัดไป) ปุ่มจะไม่ถูกใส่ลงช่องเดิม</p>
+
+<h2 id="webapi">Web API ที่มี</h2>
+<p>implement ใน JavaScript (<code>bootstrap_js.h</code>) บน native function ของ host:</p>
+<table>
+<tr><th>หมวด</th><th>Class / function</th></tr>
+<tr><td>DOM</td><td>Node, Element, HTMLElement และ subclass (Anchor, Button, Canvas, Details, Dialog, Form, Image, Input, Label, Meter, Option, Output, Progress, Select, Table*, Template, TextArea), SVGElement, Text, Comment, CharacterData, Document, DocumentFragment, DOMTokenList, DOMRect, DOMParser, customElements</td></tr>
+<tr><td>Event</td><td>EventTarget, Event, CustomEvent, UIEvent, MouseEvent, PointerEvent, TouchEvent/Touch, KeyboardEvent, InputEvent, FocusEvent, SubmitEvent, TransitionEvent, AnimationEvent, PopStateEvent, HashChangeEvent, ErrorEvent</td></tr>
+<tr><td>Observer</td><td>MutationObserver, ResizeObserver, IntersectionObserver</td></tr>
+<tr><td>Network/ข้อมูล</td><td>fetch, Request, Response, Headers, AbortController/AbortSignal, FormData, URL, URLSearchParams, TextEncoder/TextDecoder, atob/btoa, structuredClone</td></tr>
+<tr><td>Timer</td><td>setTimeout/Interval, requestAnimationFrame, requestIdleCallback, queueMicrotask, performance</td></tr>
+<tr><td>Window</td><td>localStorage, sessionStorage, location, history, navigator, screen, matchMedia, getComputedStyle, scroll/scrollTo/scrollBy, innerWidth/Height, alert/confirm/prompt, console, Image, ImageData, Animation</td></tr>
+</table>
+<p>API ของ OS (navigate, background process, fs, registry, os.*) ดูที่ <a href="../reference/js-api.html">JavaScript API ของ OS</a></p>
+
+<h2 id="perf">ตัวเลขประสิทธิภาพ (บนบอร์ด)</h2>
+<table>
+<tr><th>งาน</th><th>เวลา</th></tr>
+<tr><td>Calculator กดปุ่ม (ทั้งหมด)</td><td>~31 ms (style 4 ms / 4 el, layout 2 ms, paint ~25 ms)</td></tr>
+<tr><td>ก่อนแก้ invalidation</td><td>~130 ms ต่อการกด และ 450–530 ms สำหรับการแตะแรกหลังเปลี่ยนหน้า</td></tr>
+<tr><td>Slide ระหว่างหน้า</td><td>320 ms ที่ 39 Hz ไม่มีการวาดระหว่างทาง</td></tr>
+</table>
+<p>จุดที่ยังช้า: paint ของปุ่มที่มี transform (กดแล้วย่อ) ~25 ms ดู <a href="../project/known-issues.html">ข้อจำกัด</a></p>
+</main>
+</body>
+</html>

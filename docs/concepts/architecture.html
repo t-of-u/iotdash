@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>สถาปัตยกรรมระบบ — iotdash docs</title>
+<link rel="stylesheet" href="../assets/docs.css">
+<script src="../assets/nav.js" defer></script>
+</head>
+<body>
+<nav id="sidebar"></nav>
+<main>
+<div class="crumb">แนวคิดหลัก</div>
+<h1>สถาปัตยกรรมระบบ</h1>
+<p class="lead">ภาพรวมว่าแต่ละชั้นของ iotdash ทำหน้าที่อะไร ทำงานบน core ไหน และข้อตกลงที่แต่ละชั้นต้องรักษาเพื่อให้จอไม่กระตุกและแอปตอบสนองเร็ว</p>
+<div id="toc"></div>
+
+<h2>ชั้นของซอฟต์แวร์</h2>
+<div class="stack">
+  <div class="layer l5"><b>แอป (HTML / CSS / JS)</b><span>โปรเจกต์ของแอป (ที่ไหนก็ได้) และแอประบบใน <code>os/core/apps</code> compile เป็น image (<code>.idb</code>) เรียก API ของ OS ผ่าน <code>os.js</code></span></div>
+  <div class="layer l4"><b>iotdash OS</b><span><code>lib/rt/os.*</code> (kernel: boot, แอป, navigation, แถบระบบ, registry, ไฟล์) และ <code>os/core</code> (home, settings, shell, theme, <code>os.js</code>)</span></div>
+  <div class="layer l3"><b>Rendering engine และ JavaScript</b><span><code>lib/rt</code>: DOM, CSS, style, layout, paint, damage, ฟอนต์, รูป, SVG, canvas, animation, QuickJS host ใช้ซอร์สเดียวกับ simulator</span></div>
+  <div class="layer l2"><b>Firmware ของบอร์ด</b><span><code>src/</code>: <code>DevicePlatform</code>, driver จอ, DMA blitter, touch task, storage (SD/LittleFS), flash slot, dev link</span></div>
+  <div class="layer l1"><b>Hardware</b><span>ESP32-S3 (2 core 240 MHz), PSRAM 8 MB octal, flash 16 MB quad, จอ RGB 800×480, GT911, CH422G</span></div>
+</div>
+<p>engine คุยกับ hardware ผ่าน interface 2 ตัวใน <code>lib/rt/engine.h</code>:</p>
+<ul>
+  <li><b><code>PanelDisplay</code>:</b> <code>render(rect, draw)</code> วาดทีละแถบ, <code>present()</code>, <code>transition()</code>, <code>bufferCount()</code></li>
+  <li><b><code>Platform</code>:</b> เวลา, storage, registry, โหลด image, HTTP, log ตอนรันบนบอร์ดเป็น <code>DevicePlatform</code> ใน <code>src/main.cpp</code> ส่วน simulator เป็น <code>SimPlatform</code> ใน <code>sim/main.cpp</code></li>
+</ul>
+<p>OS เกาะกับ engine ผ่าน <code>OsHooks</code> (<code>documentReady</code>, <code>pointer</code>, <code>linkActivated</code>, <code>tick</code>, <code>image</code>) จึงแทรก UI ของระบบและ gesture ได้ในทุกหน้า โดยแอปไม่ต้องทำอะไรเพิ่ม</p>
+
+<h2>Runtime 4 layer</h2>
+<p>หลังเจอ glitch ของจอ (ดู <a href="../project/changelog.html">ประวัติ</a>) runtime ถูกจัดเป็น 4 layer ตามความสำคัญ layer บนต้องไม่ถูก layer ล่างทำให้สะดุด:</p>
+<div class="table-wrap"><table>
+  <tr><th>Layer</th><th>ทำงานที่ไหน</th><th>หน้าที่</th><th>สัญญาที่ต้องรักษา</th></tr>
+  <tr><td><b>1. ส่งภาพออกจอ (scan-out)</b></td><td>hardware LCD + ISR บน core 0 + fill DMA</td><td>ดึงภาพจาก page buffer ใน PSRAM ผ่าน bounce buffer ใน SRAM ไปจอที่ 39 Hz ต่อเนื่อง</td><td>ห้ามสะดุดเลย ตัววัดคือ <code>tears</code> = 0 ห้ามมีโค้ดใดอ่าน flash ระหว่างทำงาน และ DMA ตัวอื่นต้องหลบช่วงเติม buffer</td></tr>
+  <tr><td><b>2. สร้างเฟรม → push</b></td><td>engine task (core 1) + paint helper (core 0)</td><td>style, layout, paint ลง back buffer ทีละแถบ แล้ว <code>present()</code> สลับ buffer ที่ขอบเฟรม</td><td>ช้าได้ (เฟรมตก) แต่ไม่ทำให้ layer 1 ภาพแตก วาดผ่าน SRAM band + DMA เท่านั้น</td></tr>
+  <tr><td><b>3. Input</b></td><td>touch task บน core 0 (priority 6)</td><td>อ่าน GT911 ทุก 8 ms ใส่คิวพร้อมเวลาจริง engine ดึงจากคิวทุกรอบก่อนให้แอปทำงาน</td><td>จับ touch ได้แม้ engine ยุ่ง gesture ของระบบ (แถบล่าง) ทำงานที่ OS ก่อนถึงแอป</td></tr>
+  <tr><td><b>4. App process</b></td><td>JavaScript บน engine task</td><td>timer, background process, event handler, rAF</td><td>งบ 10 ms ต่อรอบสำหรับ timer และ process, watchdog ตัดสคริปต์ที่รันเกิน 3 วินาที process หรือ interval ที่ค้างถูกหยุดถาวร</td></tr>
+</table></div>
+<p>รายละเอียดแต่ละ layer: <a href="../core/display.html">การแสดงผล</a>, <a href="../core/engine.html">engine</a>, <a href="../core/input.html">input</a>, <a href="../core/js-runtime.html">JavaScript runtime</a></p>
+
+<h2>Task และ core</h2>
+<div class="table-wrap"><table>
+  <tr><th>Task / ISR</th><th>Core</th><th>Priority</th><th>Stack</th><th>หน้าที่</th></tr>
+  <tr><td>LCD bounce ISR (<code>RgbDisplay::onBounceEmpty</code>)</td><td>0</td><td>ISR (IRAM)</td><td>—</td><td>เติม bounce buffer ด้วย fill DMA, latch page ใหม่ตอนต้นเฟรม, เดิน slide transition, นับ tear</td></tr>
+  <tr><td><code>touch</code> (<code>touchTask</code>)</td><td>0</td><td>6</td><td>3 KB</td><td>อ่าน GT911 ทุก 8 ms ส่ง DOWN/MOVE/UP เข้าคิว <code>touchQ</code> (64 ช่อง)</td></tr>
+  <tr><td><code>paint1</code> (<code>PaintHelper</code>)</td><td>0</td><td>5</td><td>9 KB</td><td>วาดครึ่งขวาของแต่ละแถบ แบ่งตามต้นทุนที่วัดได้</td></tr>
+  <tr><td><code>http</code></td><td>0</td><td>4</td><td>10 KB (PSRAM)</td><td><code>fetch()</code> ไป URL ภายนอก (ESP HTTP client, HTTPS ด้วย certificate bundle)</td></tr>
+  <tr><td><code>probe</code></td><td>0</td><td>1</td><td>3 KB</td><td>อ่านแรงดันขา GPIO6 สำหรับ debug ฮาร์ดแวร์ (สร้างเมื่อสั่ง <code>probe</code> ครั้งแรก)</td></tr>
+  <tr><td>WiFi / NimBLE host</td><td>–</td><td>ของ IDF</td><td>NimBLE 4 KB</td><td>stack ของ radio (<code>src/radio.cpp</code>); NimBLE host task มีเฉพาะตอน Bluetooth เปิด ดู <a href="../core/connectivity.html">Wi-Fi และ Bluetooth</a></td></tr>
+  <tr><td><code>engine</code> (<code>engineTask</code>)</td><td>1</td><td>3</td><td>48 KB (SRAM)</td><td>วนรอบ: dev link → input → <code>Engine::update()</code> (OS, JS, โหลดหน้า, style, layout, paint, present) → รอ</td></tr>
+</table></div>
+<p><code>setup()</code> เริ่มอุปกรณ์ตามลำดับนี้: dev link → I2C + CH422G → GT911 → SPI2 ของ SD (ต้องก่อนจอ เพราะ GDMA แบบ memory-to-memory จะยืม trigger ID ของ peripheral ที่ยังว่าง) → จอ (+ fill DMA) → DMA blitter → paint helper → touch task → backlight → platform (fetch worker, callback ของ radio) → engine task แล้ว loop task ของ Arduino ถูกลบทิ้งเพื่อคืน stack</p>
+
+<h2>หนึ่งรอบของ engine</h2>
+<pre><code>while (true) {
+  devlink.poll();              <span class="c">// PH_IO: คำสั่งจากคอมพิวเตอร์ (screenshot, eval, ติดตั้งไฟล์ ...)</span>
+  drainTouch();                <span class="c">// PH_INPUT: event จาก touch task พร้อมเวลาที่ sample</span>
+  bool drew = eng->update();   <span class="c">// OS tick, JS (งบ 10 ms), โหลดหน้า, style, layout, paint, present</span>
+  if (!drew)                   <span class="c">// ไม่มีอะไรต้องวาด: รอ timer ถัดไป (≤ 16 ms) แต่ touch ปลุกได้ทันที</span>
+    xQueuePeek(touchQ, &amp;ev, idleMs);
+}</code></pre>
+<p>ภายใน <code>Engine::update()</code> ตัวแปร <code>rt::gPhase</code> บอกว่ากำลังทำอะไรอยู่ (load, script, os, layout, paint, io, input, idle) ISR ของจอใช้ค่านี้ติดป้ายให้ tear แต่ละครั้ง ดู <a href="../tools/debugging.html">การ debug</a></p>
+
+<h2>เส้นทางของการแตะหนึ่งครั้ง</h2>
+<div class="flow">
+  <span class="box">นิ้วแตะ GT911</span><span class="arrow">→</span>
+  <span class="box">touch task (8 ms) + timestamp</span><span class="arrow">→</span>
+  <span class="box">touchQ</span><span class="arrow">→</span>
+  <span class="box">engine: <code>pointerAt()</code></span><span class="arrow">→</span>
+  <span class="box">OS: gesture แถบล่าง / dialog</span><span class="arrow">→</span>
+  <span class="box">InputController: hit test, <code>:active</code>, click</span><span class="arrow">→</span>
+  <span class="box">JS handler</span><span class="arrow">→</span>
+  <span class="box">DOM เปลี่ยน</span><span class="arrow">→</span>
+  <span class="box">style / layout เฉพาะส่วน</span><span class="arrow">→</span>
+  <span class="box">paint แถบใน SRAM → DMA ลง back buffer</span><span class="arrow">→</span>
+  <span class="box"><code>present()</code> latch ตอนต้นเฟรม</span><span class="arrow">→</span>
+  <span class="box">scan-out</span>
+</div>
+<p>ตัวอย่างต้นทุนที่วัดได้ใน Calculator (หลังปรับแล้ว): style 4 ms (4 element), layout 2 ms (บางส่วน), paint ~25 ms (พื้นที่ ~18,800 px) รวมประมาณ 31 ms ต่อการกด</p>
+
+<h2>ข้อตกลงที่ทุกส่วนต้องรักษา</h2>
+<ul>
+  <li><b>CPU ห้ามเขียน page buffer ใน PSRAM ตรง ๆ:</b> ทุกการวาดผ่านแถบใน SRAM แล้วให้ DMA เขียน (<code>DmaBlitter</code>) การเขียนผ่าน cache ทำให้ต้องอ่าน cache line เดิมขึ้นมาก่อน ใช้ bandwidth เป็นสองเท่า</li>
+  <li><b>ห้ามอ่าน flash ระหว่างวาด:</b> flash กับ PSRAM ใช้บัสเดียวกัน (MSPI) การอ่าน flash ต่อเนื่องทำให้ scan-out เติม buffer ไม่ทัน ภาพของระบบและแอปจึงไม่ถูก map เข้าหน่วยความจำ อ่านผ่าน <code>ImageSource</code> ที่คุมจังหวะเท่านั้น ดู <a href="../core/memory-storage.html">หน่วยความจำและ storage</a></li>
+  <li><b>DMA ของจอได้ priority สูงสุดเสมอ:</b> channel ของ LCD = 5, fill DMA = 4, blitter = 0</li>
+  <li><b>engine และ JS ใช้ thread เดียว (engine task):</b> paint helper อ่านข้อมูลอย่างเดียว ห้าม intern atom หรือแก้ state ที่แชร์ระหว่าง paint</li>
+  <li><b>ซอร์ส <code>lib/rt</code> ต้อง portable:</b> build ได้ทั้ง ESP32 และ Mac ส่วนที่ต่างกันใช้ hook (<code>Platform</code>, <code>rt::gBulkCopy</code>, <code>rt::gAllocBulk</code>, <code>rt::gIoPause</code> ...)</li>
+</ul>
+</main>
+</body>
+</html>

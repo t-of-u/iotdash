@@ -1,0 +1,22 @@
+/* 800 × 480. /system/theme.css gives the OS colours (light/dark), .os-header and .os-card. */
+body { overflow: hidden; }
+.os-header .grow { flex: 1; }
+.net { display: flex; align-items: center; gap: 8px; font-size: 14px; color: var(--muted); }
+.net .dot { width: 9px; height: 9px; border-radius: 5px; background: var(--muted); }
+.net.on .dot { background: var(--ok); }
+
+.content { display: flex; gap: 20px; padding: 24px; height: 424px; }
+.counter { flex: 1.4; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; }
+.label { font-size: 15px; color: var(--muted); }
+.value { font-size: 96px; font-weight: 700; line-height: 1; color: var(--text); }
+.buttons { display: flex; gap: 16px; margin-top: 10px; }
+.btn { height: 56px; min-width: 96px; padding: 0 20px; border-radius: 16px; display: flex; align-items: center; justify-content: center;
+       font-size: 26px; font-weight: 600; background: var(--surface-2); color: var(--text); }
+.btn.primary { background: var(--accent); color: #fff; }
+.btn:active { opacity: .7; }
+.btn.wide { font-size: 16px; height: 48px; margin-top: auto; }
+
+.side { flex: 1; padding: 18px 20px; display: flex; flex-direction: column; }
+.row { display: flex; justify-content: space-between; padding: 12px 0; border-bottom: 1px solid var(--line); font-size: 16px; }
+.k { color: var(--muted); }
+.v { font-weight: 600; }

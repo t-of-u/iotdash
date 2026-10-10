@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="/system/theme.css">
+<link rel="stylesheet" href="main.css">
+</head>
+<body>
+<div class="os-header"><h1>Settings</h1></div>
+<div class="layout">
+  <nav class="tabs">
+    <div class="tab on" data-tab="general">
+      <span class="tile blue"><svg width="18" height="18" viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg></span>
+      General
+    </div>
+    <div class="tab" data-tab="connection">
+      <span class="tile green"><svg width="18" height="18" viewBox="0 0 24 24"><path d="M2.5 9a14 14 0 0 1 19 0"/><path d="M5.5 12.5a9.5 9.5 0 0 1 13 0"/><path d="M8.6 16a5 5 0 0 1 6.8 0"/><path d="M12 19.5h.01"/></svg></span>
+      Connection
+    </div>
+    <div class="tab" data-tab="sdcard">
+      <span class="tile teal"><svg width="18" height="18" viewBox="0 0 24 24"><path d="M8 3h8l3 3v14a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V6z"/><path d="M9 7v3M12 7v3M15 7v3"/></svg></span>
+      SD card
+    </div>
+    <div class="tab" data-tab="system">
+      <span class="tile slate"><svg width="18" height="18" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></svg></span>
+      System
+    </div>
+  </nav>
+
+  <main class="panel" id="general">
+    <h3>Display</h3>
+    <div class="group os-card">
+      <div class="row">
+        <span class="tile indigo"><svg width="18" height="18" viewBox="0 0 24 24"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/></svg></span>
+        <div class="text"><div class="name">Dark mode</div><div class="hint">Dark colours for the system and apps</div></div>
+        <div class="switch" data-key="darkMode" data-default="false"></div>
+      </div>
+    </div>
+    <h3>Clock</h3>
+    <div class="group os-card">
+      <div class="row">
+        <span class="tile orange"><svg width="18" height="18" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></span>
+        <div class="text"><div class="name">24-hour clock</div><div class="hint" id="clockSample">Home screen time format</div></div>
+        <div class="switch" data-key="clock24" data-default="true"></div>
+      </div>
+    </div>
+  </main>
+
+  <main class="panel" id="connection" hidden>
+    <div class="seg" id="connSeg">
+      <div class="seg-btn on" data-view="wifi">Wi-Fi</div>
+      <div class="seg-btn" data-view="bt">Bluetooth</div>
+    </div>
+
+    <section id="wifiView">
+      <div class="group os-card">
+        <div class="row">
+          <span class="tile blue"><svg width="18" height="18" viewBox="0 0 24 24"><path d="M2.5 9a14 14 0 0 1 19 0"/><path d="M5.5 12.5a9.5 9.5 0 0 1 13 0"/><path d="M8.6 16a5 5 0 0 1 6.8 0"/><path d="M12 19.5h.01"/></svg></span>
+          <div class="text"><div class="name">Wi-Fi</div><div class="hint" id="wifiHint"></div></div>
+          <div class="switch" id="wifiSwitch"></div>
+        </div>
+        <div id="wifiCurrent"></div>
+      </div>
+      <div id="wifiNets">
+        <h3 class="with-action"><span>Available networks</span><span class="h-action" id="wifiScan"></span></h3>
+        <div class="group os-card" id="wifiList"></div>
+      </div>
+    </section>
+
+    <section id="btView" hidden>
+      <div class="group os-card">
+        <div class="row">
+          <span class="tile indigo"><svg width="18" height="18" viewBox="0 0 24 24"><path d="M7 7l10 10-5 4.5V2.5L17 7 7 17"/></svg></span>
+          <div class="text"><div class="name">Bluetooth</div><div class="hint" id="btHint"></div></div>
+          <div class="switch" id="btSwitch"></div>
+        </div>
+      </div>
+      <div id="btLists">
+        <h3>My devices</h3>
+        <div class="group os-card" id="btMine"></div>
+        <h3 class="with-action"><span>Devices nearby</span><span class="h-action" id="btScan"></span></h3>
+        <div class="group os-card" id="btNear"></div>
+      </div>
+    </section>
+  </main>
+
+  <main class="panel" id="sdcard" hidden>
+    <div class="group os-card storage">
+      <div class="row top">
+        <span class="tile teal"><svg width="18" height="18" viewBox="0 0 24 24"><path d="M8 3h8l3 3v14a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V6z"/><path d="M9 7v3M12 7v3M15 7v3"/></svg></span>
+        <div class="text"><div class="name" id="sdName">SD card</div><div class="hint" id="sdKind"></div></div>
+      </div>
+      <div class="usage">
+        <div class="figures"><span class="big" id="sdUsed"></span><span class="of" id="sdTotal"></span></div>
+        <div class="meter"><div class="meter-fill" id="sdBar"></div></div>
+        <div class="legend"><span><i class="dot used"></i>Used</span><span><i class="dot free"></i><b id="sdFree"></b> free</span></div>
+      </div>
+    </div>
+
+    <h3>Installed apps</h3>
+    <div class="group os-card" id="apps"></div>
+    <div class="note">More apps: the Apps store, or over USB with <code>iotdash run --device</code> in an app's folder</div>
+
+    <h3 class="warn">Danger zone</h3>
+    <div class="group os-card danger">
+      <div class="row">
+        <span class="tile red"><svg width="18" height="18" viewBox="0 0 24 24"><path d="M12 4 3 20h18z"/><path d="M12 10v4M12 17h.01"/></svg></span>
+        <div class="text">
+          <div class="name">Factory reset</div>
+          <div class="hint">Formats the card: every app, its data and all settings are erased. The system stays.</div>
+        </div>
+        <div class="btn red" id="format">Format</div>
+      </div>
+    </div>
+  </main>
+
+  <main class="panel" id="system" hidden>
+    <h3>About</h3>
+    <div class="group os-card">
+      <div class="row kv"><div class="name">iotdash OS</div><div class="value" id="osVersion"></div></div>
+      <div class="row kv"><div class="name">Storage</div><div class="value" id="osStorage"></div></div>
+      <div class="row kv"><div class="name">Apps installed</div><div class="value" id="osApps"></div></div>
+    </div>
+
+    <h3>Registry</h3>
+    <div class="group os-card" id="registry"></div>
+    <div class="group os-card">
+      <div class="row">
+        <span class="tile slate"><svg width="18" height="18" viewBox="0 0 24 24"><path d="M4 12a8 8 0 1 0 2.3-5.6"/><path d="M4 4v4h4"/></svg></span>
+        <div class="text"><div class="name">Reset registry</div><div class="hint">Every setting goes back to its default</div></div>
+        <div class="btn" id="resetRegistry">Reset</div>
+      </div>
+    </div>
+  </main>
+</div>
+<div class="sheet-bg" id="pwSheet" hidden>
+  <div class="sheet os-card">
+    <div class="sheet-head">
+      <div class="text"><div class="sheet-title" id="pwTitle"></div><div class="sheet-sub">Enter the network password</div></div>
+      <div class="x" id="pwCancel"><svg width="20" height="20" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></div>
+    </div>
+    <div class="pw-row">
+      <div class="pw-field" id="pwField">
+        <input type="password" id="pwInput" placeholder="Password" autocomplete="off">
+        <div class="eye" id="pwEye"><svg width="22" height="22" viewBox="0 0 24 24"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></div>
+      </div>
+      <div class="btn primary" id="pwOk">Join</div>
+    </div>
+    <div class="pw-error" id="pwError"></div>
+  </div>
+</div>
+<div class="toast-wrap"><div class="toast" id="toast"></div></div>
+<script src="connection.js"></script>
+<script src="main.js"></script>
+</body>
+</html>

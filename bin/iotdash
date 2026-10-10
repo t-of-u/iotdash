@@ -1,0 +1,27 @@
+#!/bin/sh
+# The iotdash SDK's command line. Put this folder on PATH (like flutter/bin):
+#
+#   export PATH="$PATH:/path/to/iotdash/bin"      (~/.zshrc)
+#   iotdash doctor
+#   iotdash create my-app && cd my-app && iotdash run
+#
+# The first run sets up the SDK's Python tools (tools/.venv) and Chromium for them.
+set -e
+self="$0"
+while [ -h "$self" ]; do  # follow symlinks to the real bin/ (e.g. /usr/local/bin/iotdash -> here)
+  dir=$(cd "$(dirname "$self")" && pwd)
+  self=$(readlink "$self")
+  case "$self" in /*) ;; *) self="$dir/$self" ;; esac
+done
+sdk=$(cd "$(dirname "$self")/.." && pwd)
+py="$sdk/tools/.venv/bin/python"
+if [ ! -x "$py" ]; then
+  base=$(command -v python3.13 || command -v python3.12 || command -v python3.11 || command -v python3)
+  [ -n "$base" ] || { echo "iotdash: needs Python 3.11 or newer" >&2; exit 1; }
+  echo "iotdash: setting up the SDK's Python tools in $sdk/tools/.venv (once)" >&2
+  "$base" -m venv "$sdk/tools/.venv"
+  "$py" -m pip install -q --upgrade pip
+  "$py" -m pip install -q -r "$sdk/tools/requirements.txt"
+  "$sdk/tools/.venv/bin/playwright" install chromium >&2
+fi
+exec "$py" "$sdk/tools/iotdash.py" "$@"

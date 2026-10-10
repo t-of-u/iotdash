@@ -1,0 +1,47 @@
+/* Shared look for system pages; apps may use it too: <link rel="stylesheet" href="/system/theme.css">.
+   Colours follow the registry's darkMode through prefers-color-scheme. */
+
+:root {
+  --bg: #eef2f7;
+  --surface: #ffffff;
+  --surface-2: #f1f5f9;
+  --text: #0f172a;
+  --muted: #64748b;
+  --line: #e2e8f0;
+  --accent: #2563eb;
+  --accent-text: #ffffff;
+  --accent-soft: rgba(37, 99, 235, .1);
+  --danger: #dc2626;
+  --danger-soft: rgba(220, 38, 38, .1);
+  --ok: #16a34a;
+  --radius: 16px;
+  --shadow: 0 2px 10px rgba(15, 23, 42, .07);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0b1220;
+    --surface: #162033;
+    --surface-2: #1e293b;
+    --text: #e2e8f0;
+    --muted: #94a3b8;
+    --line: #2b3a52;
+    --accent: #3b82f6;
+    --accent-soft: rgba(59, 130, 246, .18);
+    --danger: #f87171;
+    --danger-soft: rgba(248, 113, 113, .16);
+    --ok: #4ade80;
+    --shadow: 0 2px 12px rgba(0, 0, 0, .35);
+  }
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body { font-family: Inter, sans-serif; background: var(--bg); color: var(--text); font-size: 16px; }
+
+.os-header {
+  height: 56px; display: flex; align-items: center; gap: 12px; padding: 0 20px;
+  background: var(--surface); border-bottom: 1px solid var(--line);
+}
+.os-header h1 { margin: 0; font-size: 20px; font-weight: 600; }
+.os-card { background: var(--surface); border-radius: var(--radius); box-shadow: var(--shadow); }
+.os-muted { color: var(--muted); }

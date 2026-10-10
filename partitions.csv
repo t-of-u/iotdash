@@ -1,0 +1,12 @@
+# Name,   Type, SubType, Offset,   Size
+# app0: firmware (engine, SD driver, boot screen). sys: the OS image copied from /system/os.idb.
+# slots: app images copied from /applications/<id>/app.idb when launched (3 x 1.5 MB).
+# reg: the OS registry (NVS). fs: LittleFS standing in for the SD card when there is none at
+# boot (/system and /applications live there then).
+nvs,      data, nvs,     0x9000,   0x5000
+otadata,  data, ota,     0xe000,   0x2000
+app0,     app,  ota_0,   0x10000,  0x3F0000
+sys,      data, 0x40,    0x400000, 0x240000
+slots,    data, 0x41,    0x640000, 0x480000
+reg,      data, nvs,     0xAC0000, 0x10000
+fs,       data, spiffs,  0xAD0000, 0x530000

@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Wi-Fi และ Bluetooth — iotdash docs</title>
+<link rel="stylesheet" href="../assets/docs.css">
+<script src="../assets/nav.js" defer></script>
+</head>
+<body>
+<nav id="sidebar"></nav>
+<main>
+<div class="crumb">แกนระบบ (core)</div>
+<h1>Wi-Fi และ Bluetooth</h1>
+<p class="lead">การเชื่อมต่อของบอร์ด: Wi-Fi station, Bluetooth LE แบบ central และการตรวจว่าออกอินเทอร์เน็ตได้จริง OS ถือ policy (เครือข่ายที่บันทึก, การต่ออัตโนมัติ, สิทธิ์ของแอป) ส่วน firmware ถือ radio จริง แอปใช้ผ่าน <code>os.net</code>, <code>os.wifi</code>, <code>os.bt</code> (ดู <a href="../reference/js-api.html#net">JavaScript API</a>) และผู้ใช้จัดการได้ที่ Settings → Connection</p>
+<div id="toc"></div>
+
+<h2 id="layers">ชั้นของระบบ</h2>
+<div class="flow">
+  <div class="box">แอป / Settings<br><small><code>os.wifi</code>, <code>os.bt</code>, <code>os.net</code></small></div><span class="arrow">→</span>
+  <div class="box"><code>N.net(op, args, cb)</code><br><small><code>js.cpp</code></small></div><span class="arrow">→</span>
+  <div class="box"><b><code>Os::net</code></b><br><small>สิทธิ์, registry, policy</small></div><span class="arrow">→</span>
+  <div class="box"><code>Platform::radio</code><br><small><code>engine.h</code></small></div><span class="arrow">→</span>
+  <div class="box"><code>src/radio.cpp</code><br><small>หรือ <code>sim/fake_radio.h</code></small></div>
+</div>
+<table>
+<tr><th>ชั้น</th><th>ไฟล์</th><th>หน้าที่</th></tr>
+<tr><td>JS API</td><td><code>os/core/os.js</code></td><td>Promise ต่อคำขอ (reject ด้วยข้อความของ radio), แปลง bytes ↔ hex, เติม <code>bytes</code>/<code>text</code> ให้ event <code>notify</code></td></tr>
+<tr><td>Policy</td><td><code>lib/rt/os_net.cpp</code> (<code>Os::net</code>)</td><td>ตรวจสิทธิ์, เก็บเครือข่ายและอุปกรณ์ใน registry, ต่อ Wi-Fi อัตโนมัติ, ตรวจอินเทอร์เน็ต, เปิด Bluetooth เมื่อมีคนใช้, ส่ง event <code>net</code> และ <code>bt</code></td></tr>
+<tr><td>Platform</td><td><code>lib/rt/engine.h</code></td><td><code>radio(op, argsJson, done)</code>: <code>done(err, json)</code> กลับมาบน engine thread (ผ่าน <code>pollAsync</code>), <code>err</code> ว่าง = สำเร็จ; <code>radioEvent(name, json)</code> สำหรับ event ที่ radio ส่งเอง ค่าเริ่มต้นของ platform คือ "no radio on this platform"</td></tr>
+<tr><td>บอร์ด</td><td><code>src/radio.cpp</code></td><td>Wi-Fi ผ่าน Arduino WiFi, BLE central ผ่าน NimBLE host API: scan, connect, GATT discovery, read, write, notify</td></tr>
+<tr><td>Simulator</td><td><code>sim/fake_radio.h</code></td><td>เครือข่ายและอุปกรณ์ปลอม รวมถึงตาชั่ง (ดู <a href="#sim">ด้านล่าง</a>)</td></tr>
+</table>
+<p>operation เป็นชื่อแบบ <code>"wifi.scan"</code>, <code>"bt.connect"</code> พร้อม argument เป็น JSON คำตอบและ event จาก task ของ radio ถูกส่งต่อเข้า engine thread ก่อนถึง OS และ JS เสมอ</p>
+
+<h2 id="wifi">Wi-Fi</h2>
+<table>
+<tr><th><code>state</code></th><th>ความหมาย</th></tr>
+<tr><td><code>off</code></td><td>radio ปิด (<code>wifi.enabled</code> = false)</td></tr>
+<tr><td><code>idle</code></td><td>เปิดอยู่ ยังไม่ได้ต่อเครือข่ายไหน</td></tr>
+<tr><td><code>connecting</code></td><td>กำลังต่อ หรือหลุดไปแล้วและ driver กำลังต่อใหม่เอง</td></tr>
+<tr><td><code>connected</code></td><td>ได้ IP แล้ว</td></tr>
+<tr><td><code>failed</code></td><td>ต่อไม่สำเร็จ: <code>error</code> = <code>wrong password</code>, <code>network not found</code> หรือ <code>timed out</code> (เกิน 20 วินาที) handshake ที่ล้ม (หรือหา network ไม่เจอ) ต้องเกิด 3 ครั้งติดกันจึงสรุปว่า <code>wrong password</code>; ระหว่างนั้นต่อใหม่เอง เพราะครั้งแรกหลัง boot หรือตอน Bluetooth ทำงาน handshake ที่รหัสถูกก็หมดเวลาได้ (เดิมสรุปตั้งแต่ครั้งแรก network ที่บันทึกไว้จึงขึ้นว่ารหัสผิดหลัง reboot) เมื่อผิดจริงแล้วจะไม่ลองซ้ำ</td></tr>
+</table>
+<ul>
+  <li><code>wifi.scan</code> คืนหนึ่งรายการต่อ SSID (AP ที่แรงที่สุด) เรียงจากแรงไปอ่อน เครือข่ายที่ซ่อนชื่อไม่ถูกแสดง</li>
+  <li>ระหว่างที่ต่ออยู่ RSSI ถูกอ่านใหม่ทุก 10 วินาที และส่ง event เมื่อเปลี่ยนตั้งแต่ 5 dB</li>
+  <li>driver ไม่บันทึกเครือข่ายเอง (<code>WiFi.persistent(false)</code>) รายการเครือข่ายเป็นของ OS</li>
+  <li>ครั้งแรกที่ได้ IP บอร์ดตั้งนาฬิกาจาก NTP (<code>pool.ntp.org</code>, <code>time.google.com</code>, <code>time.cloudflare.com</code>) เขตเวลาไทย (<code>ICT-7</code>) ก่อนหน้านั้น <code>Date</code> ยังนับจากปี 1970</li>
+</ul>
+
+<h3 id="saved">เครือข่ายที่บันทึกและการต่ออัตโนมัติ</h3>
+<ul>
+  <li>เครือข่ายถูกบันทึกลง registry <code>secure.wifi</code> (<code>[{ssid, pass}]</code> ล่าสุดก่อน, สูงสุด 8) <b>เมื่อต่อสำเร็จแล้วเท่านั้น</b> รหัสที่ผิดจึงไม่ถูกจำ</li>
+  <li><code>wifi.connect</code> ที่ไม่ส่ง <code>pass</code> ใช้รหัสที่บันทึกไว้</li>
+  <li>ตอนระบบเริ่ม (<code>Os::netStart</code>) ถ้า <code>wifi.enabled</code> (ค่าเริ่มต้น true) จะเปิด Wi-Fi, scan แล้วต่อ<b>เครือข่ายที่ใช้ล่าสุดที่อยู่ในระยะ</b></li>
+  <li>ระหว่างที่ไม่ได้ต่อ จะลองแบบเดียวกันทุก 30 วินาที (ยกเว้นมีการต่อที่ค้างอยู่)</li>
+  <li>frame <code>WIFI</code> ทาง USB (<code>iotdash.py device wifi "SSID:PASS"</code>) ใช้เส้นทางเดียวกับ Settings: ต่อทันทีและบันทึกเมื่อต่อได้</li>
+</ul>
+
+<h3 id="internet">ตรวจอินเทอร์เน็ต</h3>
+<p>ต่อ Wi-Fi ได้ไม่ได้แปลว่าออกอินเทอร์เน็ตได้ (router ไม่มี uplink, captive portal) OS จึงตรวจเองด้วย <code>GET</code>:</p>
+<table>
+<tr><th></th><th>ค่า</th></tr>
+<tr><td>URL</td><td><code>http://connectivitycheck.gstatic.com/generate_204</code> ต้องได้ 204; เปลี่ยนได้ด้วย registry <code>net.probeUrl</code> (URL อื่นต้องได้ 2xx)</td></tr>
+<tr><td>เมื่อไร</td><td>ทันทีที่ Wi-Fi ต่อได้, ทุก 30 วินาทีระหว่างต่ออยู่, 8 วินาทีหลังการตรวจที่ล้มเหลว, และเมื่อเรียก <code>os.net.check()</code></td></tr>
+<tr><td>Timeout</td><td>6 วินาที</td></tr>
+<tr><td>ผล</td><td><code>os.net.online()</code> = <code>true</code>, <code>false</code> หรือ <code>null</code> (ยังไม่รู้) เมื่อเปลี่ยนจะส่ง event <code>net</code></td></tr>
+</table>
+
+<h2 id="secrets">เครือข่ายที่ติดมากับ system image</h2>
+<p>ไฟล์ <code>os/core/private/secrets.json</code> (อยู่ใน <code>.gitignore</code> ไม่ถูก commit) ทำให้บอร์ดที่เพิ่ง deploy ต่อ Wi-Fi ได้เองโดยไม่ต้องพิมพ์รหัสบนจอ:</p>
+<pre><code>{"wifi": [{"ssid": "Office", "pass": "…"}, {"ssid": "Lab", "pass": "…"}]}</code></pre>
+<ul>
+  <li><code>os build</code> ใส่ไฟล์นี้ใน system image ที่ <code>system/private/secrets.json</code> ซึ่งหน้าไหนก็อ่านไม่ได้: <code>Engine::open</code> ไม่เปิด และ <code>fetch()</code> ตอบ 404 ทุก path ใต้ <code>system/private/</code> มีแต่โค้ด native ของ OS ที่อ่าน</li>
+  <li>ตอนระบบเริ่ม OS เทียบ hash ของไฟล์ (FNV-1a) กับ <code>secure.secretsHash</code> ถ้าต่าง จะรวมเครือข่ายในไฟล์เข้า <code>secure.wifi</code> (ตัวแรกในไฟล์ได้ลำดับแรก) แล้วจำ hash ใหม่</li>
+  <li>เครือข่ายที่ผู้ใช้กด Forget จะไม่กลับมาจนกว่าไฟล์จะเปลี่ยน; หลัง Reset registry หรือ factory reset (hash หายไปด้วย) เครือข่ายในไฟล์กลับมาตอนระบบเริ่มครั้งถัดไป</li>
+  <li>รูปแบบเครือข่ายเดียว <code>{"ssid": "…", "pass": "…"}</code> ก็ใช้ได้</li>
+</ul>
+<div class="warn"><p>รหัสผ่านอยู่ใน <code>os.idb</code> บน storage และใน registry (NVS) แบบไม่เข้ารหัส สิ่งที่กันไว้คือการเข้าถึงจาก script ของแอปเท่านั้น</p></div>
+
+<h2 id="bt">Bluetooth LE (central)</h2>
+<ul>
+  <li><b>เปิดเมื่อมีคนใช้:</b> Bluetooth กิน SRAM ภายใน จึงไม่เปิดตอน boot คำขอ <code>bt.*</code> แรก (scan, connect, …) จะเปิดให้เองถ้า <code>bt.enabled</code> (ค่าเริ่มต้น true) ถ้าผู้ใช้ปิดไว้จะได้ error <code>Bluetooth is off</code> การปิดคืนหน่วยความจำของ controller และ host task</li>
+  <li><b>Scan:</b> active scan (ขอ scan response เพื่อให้ได้ชื่อ) นาน <code>ms</code> (ค่าเริ่มต้น 8000, ช่วง 1–60 วินาที) ส่ง event <code>found</code> เมื่อเห็นอุปกรณ์ใหม่หรือเพิ่งได้ชื่อ ผลสุดท้ายเรียงตาม RSSI scan ใหม่ยกเลิกอันเก่า (อันเก่าได้ <code>[]</code>)</li>
+  <li><b>Connect:</b> timeout 10 วินาที, หยุด scan ที่ค้างก่อน (controller scan และ connect พร้อมกันไม่ได้), แลก MTU แล้วค้นทุก service และ characteristic คืน <code>{id, name, type, mtu, services}</code> ต่อพร้อมกันได้ 2 อุปกรณ์</li>
+  <li><b>จำอุปกรณ์:</b> อุปกรณ์ที่ต่อสำเร็จถูกเก็บใน registry <code>bt.devices</code> (<code>[{id, name, type}]</code> ล่าสุดก่อน, สูงสุด 8) พร้อมชนิด address จึงต่อใหม่ได้โดยไม่ต้อง scan</li>
+  <li><b>Read / write / notify:</b> ข้อมูลไม่เกิน 512 byte; <code>write</code> แบบรอ response เมื่อ characteristic มี <code>write</code> ไม่งั้นใช้ write without response; <code>subscribe</code> เขียน CCCD (notify หรือ indicate)</li>
+  <li><b>UUID:</b> 16-bit เป็นตัวเล็ก 4 หลัก (<code>"ffe0"</code>), 128-bit ที่อยู่บน Bluetooth base UUID ถูกย่อเหลือ 4 หลัก, ที่เหลือเป็นรูปเต็ม ค่าที่ส่งเข้าไปไม่สนตัวเล็ก/ใหญ่และรับ <code>0x</code> นำหน้า</li>
+  <li>id ของอุปกรณ์คือ address เช่น <code>c8:2e:18:a4:01:5d</code> ยังไม่มี pairing/bonding (characteristic ที่บังคับเข้ารหัสใช้ไม่ได้)</li>
+</ul>
+
+<h2 id="rights">สิทธิ์ของแอป</h2>
+<table>
+<tr><th>Operation</th><th>แอปทั่วไป</th><th>System (Settings)</th></tr>
+<tr><td><code>os.net.*</code>, <code>wifi.state</code>, <code>wifi.scan</code>, <code>wifi.saved</code> (SSID เท่านั้น)</td><td>✓</td><td>✓</td></tr>
+<tr><td><code>bt.scan</code>, <code>bt.stop</code>, <code>bt.devices</code>, <code>bt.connect</code>, <code>bt.disconnect</code>, <code>bt.read</code>, <code>bt.write</code>, <code>bt.notify</code></td><td>✓</td><td>✓</td></tr>
+<tr><td><code>wifi.power</code>, <code>wifi.connect</code>, <code>wifi.disconnect</code>, <code>wifi.forget</code>, <code>bt.power</code>, <code>bt.forget</code></td><td>✗ "only the system can change connections"</td><td>✓</td></tr>
+<tr><td>registry <code>secure.*</code></td><td>มองไม่เห็น: <code>get</code> คืนค่า default, ไม่อยู่ใน <code>keys()</code>/<code>all()</code>, event <code>registry</code> ได้ value เป็น null</td><td>✓ (Settings → System แสดงเป็น ••••••)</td></tr>
+</table>
+<p>frame <code>WIFI</code> ทาง USB เป็นคำขอของ kernel เอง (<code>asSystem</code>) จึงผ่านได้ไม่ว่าแอปที่เปิดอยู่จะเป็นอะไร</p>
+
+<h2 id="memory">SRAM ภายในและ sdkconfig</h2>
+<p>radio ต้องใช้ SRAM ภายในซึ่งมีน้อย จึงย้ายทุกอย่างที่ย้ายได้ไป PSRAM และลดสิ่งที่ต้องอยู่ใน SRAM:</p>
+<ul>
+  <li><code>malloc()</code> ทั่วไปเลือก PSRAM ก่อนทุกขนาด (<code>CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=0</code>) ส่วนที่ต้องเป็น internal (WiFi, BLE, stack) ขอด้วย capability ของมันเอง</li>
+  <li>WiFi: TX buffer จองต่อ packet จาก PSRAM แทน static 8 ตัวใน SRAM, RX static 4 ตัว</li>
+  <li>NimBLE host จองจาก PSRAM, central ขนาดเล็ก (2 link), host task stack 4 KB</li>
+  <li>TLS: buffer ของ mbedTLS (~40 KB ต่อ connection) อยู่ใน PSRAM (<code>CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC</code>) ก่อนหน้านี้ HTTPS ล้มด้วย <code>mbedtls_ssl_setup -0x7F00</code> (หน่วยความจำไม่พอ)</li>
+  <li>stack ของ task <code>http</code> (10 KB) อยู่ใน PSRAM, data cache 32 KB (เดิม 64 KB), bounce buffer ของจอ 12 แถว (เดิม 16), buffer รับของ dev link 6 KB (เดิม 16 KB), task <code>probe</code> สร้างเมื่อใช้ครั้งแรก</li>
+</ul>
+<div class="facts">
+  <div class="fact"><div class="v">34 KB</div><div class="k">SRAM ภายในที่ต้องว่างก่อนเปิด Wi-Fi</div></div>
+  <div class="fact"><div class="v">30 KB</div><div class="k">SRAM ภายในที่ต้องว่างก่อนเปิด Bluetooth</div></div>
+  <div class="fact"><div class="v">≈48 KB</div><div class="k">SRAM ภายในที่ยังว่างเมื่อเปิดทั้งสอง</div></div>
+</div>
+<p>ถ้า SRAM ไม่พอ radio จะปฏิเสธพร้อมข้อความ เช่น <code>Bluetooth does not start: not enough memory (25 KB free, 30 KB needed)</code> แทนการเริ่มครึ่งทางแล้วรั่ว (WiFi) หรือ crash ใน stack (NimBLE) ค่า sdkconfig ทั้งหมดอยู่ใน <a href="hardware.html#sdkconfig">ฮาร์ดแวร์</a> ตัวเลขจริงดูได้ด้วยคำสั่ง text <code>heap</code> (<a href="../reference/devlink.html#text-commands">Dev link</a>)</p>
+
+<h2 id="settings">Settings → Connection</h2>
+<p>แท็บ Connection ของ Settings (<code>os/core/apps/settings/connection.js</code>) มี segment Wi-Fi / Bluetooth รายละเอียดอยู่ที่ <a href="../concepts/os.html#connection">iotdash OS</a> โมเด็ม 4G Cat-1 ถ้าเพิ่มในอนาคตจะอยู่ในแท็บเดียวกัน (ยังไม่ได้ทำ)</p>
+
+<h2 id="sim">Simulator</h2>
+<p><code>SimPlatform::radio</code> ส่งต่อให้ <code>FakeRadio</code> ซึ่งตอบช้าเหมือนของจริง (scan Wi-Fi 1.5 วินาที, ต่อสำเร็จ 1.2 วินาที / ล้มเหลว 2.5 วินาที, เปิด BLE 0.3 วินาที, connect BLE 0.7 วินาที) การตรวจอินเทอร์เน็ตใน sim ใช้ <code>curl</code> ของ Mac จึงได้ผลจริง</p>
+<h3>Wi-Fi ปลอม</h3>
+<table>
+<tr><th>SSID</th><th>รหัส</th><th>RSSI</th></tr>
+<tr><td><code>Home-WiFi</code></td><td><code>home1234</code></td><td>−48</td></tr>
+<tr><td><code>TopuTofu</code></td><td><code>tofu1234</code></td><td>−57</td></tr>
+<tr><td><code>IoT-Lab</code></td><td><code>iotlab99</code></td><td>−66</td></tr>
+<tr><td><code>Cafe Free WiFi</code></td><td>(เปิด)</td><td>−71</td></tr>
+<tr><td><code>Neighbor_5G</code></td><td>ต่อไม่ได้ ("network not found")</td><td>−83</td></tr>
+</table>
+<p>รหัสผิดได้ <code>wrong password</code> เมื่อต่อแล้ว IP คือ <code>192.168.1.57</code></p>
+<h3>Bluetooth ปลอม</h3>
+<table>
+<tr><th>อุปกรณ์</th><th>id</th><th>Service / characteristic</th></tr>
+<tr><td><code>BLE-Scale-01</code> (ตาชั่ง)</td><td><code>c8:2e:18:a4:01:5d</code></td><td><code>ffe0</code> / <code>ffe1</code> (read, writeNoResponse, notify)</td></tr>
+<tr><td><code>Mi Smart Band 7</code></td><td><code>e4:a1:22:07:9b:30</code></td><td><code>180f</code> / <code>2a19</code> (read, notify)</td></tr>
+<tr><td><code>JBL Flip 6</code></td><td><code>f0:13:c3:55:2a:11</code></td><td>–</td></tr>
+<tr><td>(ไม่มีชื่อ)</td><td><code>d3:44:9e:10:6c:02</code></td><td>–</td></tr>
+</table>
+<p>เมื่อ subscribe ตาชั่งจะส่ง frame ASCII 4 ครั้งต่อวินาทีแบบโมดูล BLE-UART ของตาชั่งจริง: <code>ST,GS,+0012.34kg\r\n</code> เมื่อนิ่ง, <code>US,…</code> ระหว่างค่ากำลังวิ่งเข้าหาน้ำหนัก, <code>OL,GS,+9999999kg</code> เมื่อเกินพิกัด การเขียนข้อมูลที่ขึ้นต้นด้วย <code>TARE</code> ทำให้น้ำหนักเป็น 0</p>
+<table>
+<tr><th>คำสั่ง script</th><th>ทำอะไร</th></tr>
+<tr><td><code>scale KG</code></td><td>วางน้ำหนัก KG บนตาชั่งปลอม (ค่าจะค่อยๆ นิ่ง พร้อม noise เล็กน้อย)</td></tr>
+<tr><td><code>scale OL</code></td><td>เกินพิกัด</td></tr>
+<tr><td><code>scaleoff</code></td><td>ตาชั่งหลุดการเชื่อมต่อ (event <code>disconnected</code>, reason <code>timeout</code>)</td></tr>
+</table>
+<pre><code>iotdash os sim --script "
+  launch settings; eval showTab('connection'); wait 2500; shot wifi.png
+  eval os.bt.on((e) =&gt; e.type === 'notify' &amp;&amp; console.log(e.text.trim()))
+  eval os.bt.connect('c8:2e:18:a4:01:5d').then(() =&gt; os.bt.subscribe('c8:2e:18:a4:01:5d', 'ffe0', 'ffe1'))
+  wait 1500; scale 12.34; wait 2000; scale OL; wait 500; scaleoff; wait 500"</code></pre>
+<p>JS ใน <code>eval</code> ห้ามมี <code>;</code> เพราะเป็นตัวคั่นคำสั่งของ script แอปตาชั่ง ใช้ตาชั่งตัวเดียวกันนี้ใน sim (ดู แอปตาชั่ง)</p>
+</main>
+</body>
+</html>

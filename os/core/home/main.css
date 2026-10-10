@@ -1,0 +1,51 @@
+body {
+  overflow: hidden;
+  background: linear-gradient(160deg, #dbeafe 0%, #eef2f7 48%, #fce7f3 100%);
+}
+@media (prefers-color-scheme: dark) {
+  body { background: linear-gradient(160deg, #0b1220 0%, #172554 62%, #2e1065 100%); }
+}
+
+.status {
+  height: 64px; padding: 14px 28px 0; display: flex; align-items: baseline; justify-content: space-between;
+}
+.clock { display: flex; align-items: baseline; gap: 12px; }
+#time { font-size: 30px; font-weight: 600; font-variant-numeric: tabular-nums; }
+#date { font-size: 16px; color: var(--muted); white-space: nowrap; }
+.brand { font-size: 15px; font-weight: 600; color: var(--muted); letter-spacing: .02em; }
+
+.pager {
+  height: 368px; display: flex; overflow-x: auto; overflow-y: hidden;
+  scroll-snap-type: x mandatory;
+}
+.page {
+  flex: 0 0 800px; height: 368px; padding: 14px 40px 0;
+  display: grid; grid-template-columns: repeat(5, 1fr); grid-template-rows: 172px 172px;
+  scroll-snap-align: start;
+}
+
+.app { display: flex; flex-direction: column; align-items: center; padding-top: 10px; }
+.icon {
+  width: 92px; height: 92px; border-radius: 24px; display: block;
+  box-shadow: 0 8px 20px rgba(15, 23, 42, .18);
+  /* let go: back with a small spring */
+  transition: transform .22s cubic-bezier(.3, 1.6, .5, 1), opacity .22s ease-out;
+}
+/* pressed: in quickly, a touch dimmer */
+.app:active .icon { transform: scale(.9); opacity: .85; transition: transform .08s ease-out, opacity .08s ease-out; }
+.label {
+  margin-top: 10px; max-width: 132px; font-size: 15px; font-weight: 500; text-align: center;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+.empty {
+  grid-column: 1 / 6; align-self: center; justify-self: center; width: 520px; padding: 24px 28px;
+  border-radius: 20px; background: var(--surface); box-shadow: var(--shadow); text-align: center;
+}
+.empty h2 { margin: 0 0 8px; font-size: 20px; }
+.empty p { margin: 0; color: var(--muted); line-height: 1.5; }
+.empty code { font-size: 14px; background: var(--surface-2); padding: 2px 6px; border-radius: 6px; }
+
+.dots { height: 48px; display: flex; align-items: center; justify-content: center; gap: 10px; }
+.dot { width: 8px; height: 8px; border-radius: 4px; background: rgba(100, 116, 139, .45); transition: width .2s, background-color .2s; }
+.dot.on { width: 22px; background: var(--accent); }

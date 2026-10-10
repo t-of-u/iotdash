@@ -1,0 +1,3 @@
+{"sensors": [{"name": "อุณหภูมิ", "value": 27.4, "unit": "°C"}, {"name": "ความชื้น", "value": 68, "unit": "%"},
+ {"name": "แสง", "value": 412, "unit": "lx"}, {"name": "CO₂", "value": 1180, "unit": "ppm", "alert": true},
+ {"name": "pH", "value": 6.8, "unit": ""}, {"name": "ระดับน้ำ", "value": 73, "unit": "%"}]}

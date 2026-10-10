@@ -1,0 +1,227 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>JavaScript API ของ OS — iotdash docs</title>
+<link rel="stylesheet" href="../assets/docs.css">
+<script src="../assets/nav.js" defer></script>
+</head>
+<body>
+<nav id="sidebar"></nav>
+<main>
+<div class="crumb">อ้างอิง</div>
+<h1>JavaScript API ของ OS</h1>
+<p class="lead">API ที่ <code>os/core/os.js</code> เพิ่มให้ทุกหน้า (แอปและหน้าของระบบ) นอกเหนือจาก Web API มาตรฐาน function ที่ fail จะ throw <code>Error</code> พร้อมข้อความที่บอกสาเหตุ
+รายการ Web API มาตรฐานดูที่ <a href="../core/engine.html#webapi">Rendering engine</a></p>
+<div id="toc"></div>
+
+<h2 id="navigation">Navigation</h2>
+<table>
+<tr><th>API</th><th>คำอธิบาย</th></tr>
+<tr><td><code>navigate(page)</code></td><td>เปิด <code>pages/&lt;page&gt;</code> ของแอปที่รันอยู่ (push ลง stack, slide ไปซ้าย) คืน <code>true</code> Throw: <code>"pages are under pages/: …"</code>, <code>"no page …"</code>, <code>"the system is starting"</code></td></tr>
+<tr><td><code>navigate(-1)</code></td><td>ย้อนกลับหน้าก่อน คืน <code>false</code> ถ้าอยู่หน้าแรกแล้ว (ไม่ถามปิดแอป)</td></tr>
+<tr><td><code>history.back()</code>, <code>history.go(-n)</code></td><td>เหมือน <code>navigate(-1)</code> (ย้อนครั้งละหนึ่งหน้า)</td></tr>
+<tr><td><code>&lt;a href="pages/x/main.html"&gt;</code></td><td>ลิงก์ไปหน้าในแอปเดียวกันผ่าน stack; <code>href="#back"</code> หรือ attribute <code>data-back</code> ย้อนกลับ; <code>data-transition</code> = <code>slide|up|down|fade|none</code></td></tr>
+</table>
+<pre><code>document.getElementById('toHistory').addEventListener('click', () =&gt; navigate('history/main.html'));
+document.getElementById('back').addEventListener('click', () =&gt; navigate(-1));</code></pre>
+
+<h2 id="processes">Background process</h2>
+<table>
+<tr><th>API</th><th>คำอธิบาย</th></tr>
+<tr><td><code>setBackgroundProcess(name, scope, fn, intervalMs = 1000)</code></td><td><code>scope</code> = <code>"APP"</code> (อยู่จนออกจากแอป) หรือ <code>"PAGE"</code> (หยุดเมื่อออกจากหน้า) <code>fn(info)</code> รันทันทีแล้วทุก <code>intervalMs</code>; <code>info = {name, runs}</code> คืน number = delay ถัดไป, <code>false</code> = หยุด, หรือ Promise ของค่าเหล่านี้ ชื่อซ้ำแทนที่ตัวเดิม คืน id</td></tr>
+<tr><td><code>rmBackgroundProcess(name)</code></td><td>หยุด process ตามชื่อ คืน <code>true</code> ถ้ามีอยู่</td></tr>
+<tr><td><code>clearBackgroundProcess(scope = "ALL")</code></td><td><code>"ALL" | "APP" | "PAGE"</code> คืนจำนวนที่หยุด</td></tr>
+<tr><td><code>os.processes()</code></td><td>รายการ process ที่ทำงานอยู่</td></tr>
+</table>
+<p>process ที่ถูก watchdog หยุด (รันเกิน 3 วินาที) จะถูกปิดถาวร ดู <a href="../core/js-runtime.html#processes">JavaScript runtime</a></p>
+
+<h2 id="files">ไฟล์ (โฟลเดอร์ <code>data/</code> ของแอป)</h2>
+<p>ทุก path เป็น relative ต่อ <code>/applications/&lt;id&gt;/data/</code> (system app: <code>/system/data/</code>) <code>..</code> ที่ออกนอกโฟลเดอร์ throw <code>"path outside the app: …"</code> ไม่มี storage → <code>"no SD card"</code></p>
+<h3><code>open(path, mode = "r")</code> → <code>OsFile</code></h3>
+<p><code>mode</code>: <code>r</code>, <code>w</code>, <code>a</code>, <code>r+</code>, <code>w+</code>, <code>a+</code> เติม <code>b</code> เพื่ออ่าน/เขียนเป็น bytes (เช่น <code>"rb"</code>) โฟลเดอร์แม่ถูกสร้างให้อัตโนมัติเมื่อเขียน</p>
+<table>
+<tr><th>Method / property</th><th>คำอธิบาย</th></tr>
+<tr><td><code>read(n?)</code></td><td>อ่าน n byte หรือที่เหลือทั้งหมด: string หรือ <code>ArrayBuffer</code> ในโหมด <code>b</code></td></tr>
+<tr><td><code>readLine()</code></td><td>หนึ่งบรรทัด (ตัด <code>\n</code>, <code>\r\n</code>) หรือ <code>null</code> เมื่อจบไฟล์</td></tr>
+<tr><td><code>readLines()</code></td><td>array ของทุกบรรทัดที่เหลือ</td></tr>
+<tr><td><code>write(data)</code></td><td>string, <code>ArrayBuffer</code> หรือ typed array คืนจำนวน byte</td></tr>
+<tr><td><code>writeLine(s)</code></td><td><code>write(s + "\n")</code></td></tr>
+<tr><td><code>seek(pos, whence?)</code></td><td><code>whence</code> = <code>"start"</code> (ค่าเริ่มต้น), <code>"current"</code>, <code>"end"</code> หรือ 0/1/2 คืนตำแหน่งใหม่</td></tr>
+<tr><td><code>tell()</code>, <code>size</code></td><td>ตำแหน่งปัจจุบัน, ขนาดไฟล์</td></tr>
+<tr><td><code>flush()</code>, <code>close()</code></td><td>ควรปิดเองเสมอ ไฟล์ที่ไม่ได้ปิดจะค้างอยู่จนออกจากแอป (<code>endSession</code>)</td></tr>
+<tr><td><code>path</code>, <code>mode</code>, <code>closed</code></td><td>ข้อมูลของไฟล์</td></tr>
+</table>
+<h3><code>fs.*</code></h3>
+<table>
+<tr><th>API</th><th>คืนค่า / หมายเหตุ</th></tr>
+<tr><td><code>fs.readFile(p, enc?)</code></td><td>string หรือ <code>ArrayBuffer</code> เมื่อ <code>enc</code> = <code>"binary"</code>/<code>"bytes"</code> Throw <code>"no such file: …"</code></td></tr>
+<tr><td><code>fs.readJSON(p)</code></td><td><code>JSON.parse</code> ของไฟล์</td></tr>
+<tr><td><code>fs.writeFile(p, data)</code>, <code>fs.appendFile(p, data)</code></td><td>เขียนทับ / ต่อท้าย</td></tr>
+<tr><td><code>fs.writeJSON(p, v)</code></td><td><code>JSON.stringify</code> แล้วเขียนทับ</td></tr>
+<tr><td><code>fs.exists(p)</code></td><td>boolean</td></tr>
+<tr><td><code>fs.stat(p)</code></td><td><code>{size, dir, mtime}</code> หรือ <code>null</code></td></tr>
+<tr><td><code>fs.list(p = "")</code></td><td>array ของ <code>{name, dir, size}</code></td></tr>
+<tr><td><code>fs.mkdir(p)</code></td><td>สร้างแบบ <code>mkdir -p</code></td></tr>
+<tr><td><code>fs.remove(p, recursive?)</code></td><td>ลบไฟล์หรือโฟลเดอร์ (โฟลเดอร์ที่ไม่ว่างต้อง <code>recursive</code> ไม่งั้น throw <code>"folder not empty"</code>)</td></tr>
+<tr><td><code>fs.rename(a, b)</code></td><td>ย้าย/เปลี่ยนชื่อภายใน <code>data/</code></td></tr>
+<tr><td><code>fs.open</code></td><td>เหมือน <code>open</code></td></tr>
+</table>
+
+<h2 id="storage">localStorage / sessionStorage</h2>
+<table>
+<tr><th>API</th><th>เก็บที่</th></tr>
+<tr><td><code>localStorage</code></td><td><code>memory.json</code> ของแอป: ใช้ร่วมทุกหน้า, ถาวร, flush ภายใน 500 ms และเมื่อออกจากแอป</td></tr>
+<tr><td><code>sessionStorage</code></td><td>ในหน่วยความจำของหน้านั้น หายเมื่อเปลี่ยนหน้า</td></tr>
+</table>
+<p>ทั้งคู่มี <code>getItem</code>, <code>setItem</code>, <code>removeItem</code>, <code>clear</code>, <code>key(i)</code>, <code>length</code> และเข้าถึงแบบ property ได้ (<code>localStorage.count = 3</code>) ค่าเป็น string เสมอ</p>
+
+<h2 id="registry">registry</h2>
+<table>
+<tr><th>API</th><th>สิทธิ์</th><th>คำอธิบาย</th></tr>
+<tr><td><code>registry.get(key, default?)</code></td><td>ทุกแอป</td><td>ค่า JSON ที่ parse แล้ว หรือ <code>default</code> (ไม่ระบุ = <code>null</code>)</td></tr>
+<tr><td><code>registry.keys()</code>, <code>registry.all()</code></td><td>ทุกแอป</td><td>รายชื่อ key, object ทั้งหมด</td></tr>
+<tr><td><code>registry.onChange(fn)</code></td><td>ทุกแอป</td><td>= <code>os.on('registry', fn)</code> คืนฟังก์ชันยกเลิก</td></tr>
+<tr><td><code>registry.set(key, value)</code></td><td>system</td><td>เก็บเป็น JSON, apply (dark mode) และส่ง event ทันที</td></tr>
+<tr><td><code>registry.remove(key)</code>, <code>registry.clear()</code></td><td>system</td><td>throw <code>"the registry is read-only for apps"</code> ในแอปทั่วไป</td></tr>
+</table>
+<p>Key ที่ระบบใช้: <code>darkMode</code> (boolean, ค่าเริ่มต้น false), <code>clock24</code> (boolean, ค่าเริ่มต้น true), <code>wifi.enabled</code>, <code>bt.enabled</code> (boolean, ค่าเริ่มต้น true), <code>bt.devices</code>, <code>net.probeUrl</code> และ <code>secure.wifi</code>, <code>secure.secretsHash</code> ซึ่งแอปทั่วไปมองไม่เห็น (<code>get</code> คืน default) ดู <a href="../concepts/os.html#registry">Registry</a></p>
+
+<h2 id="os">os</h2>
+<table>
+<tr><th>API</th><th>คำอธิบาย</th></tr>
+<tr><td><code>os.version</code></td><td>version ของ OS (<code>"0.1.0"</code>)</td></tr>
+<tr><td><code>os.app</code></td><td>id ของแอปปัจจุบัน (<code>"home"</code> บน home screen)</td></tr>
+<tr><td><code>os.page()</code></td><td><code>{id, title, version, icon, system, page, depth}</code>: <code>page</code> relative ต่อ root ของแอป, <code>depth</code> = ความลึกของ stack</td></tr>
+<tr><td><code>os.apps()</code></td><td>array ของ <code>{id, title, version, icon, system, source, versionId?, installed?}</code> (system app ก่อน แล้วแอปที่ติดตั้งเรียงตามชื่อ) <code>source</code>: <code>"system"</code>, <code>"store"</code>, <code>"usb"</code> หรือ <code>""</code> (ไม่มี <code>install.json</code>); <code>versionId</code> = version id ใน store; <code>installed</code> = unix วินาที</td></tr>
+<tr><td><code>os.launch(id)</code></td><td>เปิดแอป Throw: <code>"no app …"</code>, <code>"another app is opening"</code>, <code>"cannot read …"</code></td></tr>
+<tr><td><code>os.home(ask = true)</code></td><td>กลับ home; <code>ask</code> = ถาม "Close the app and go to the home screen?" ก่อน</td></tr>
+<tr><td><code>os.back()</code></td><td>เหมือนปุ่ม back ของระบบ (หน้าแรก = ถามปิดแอป)</td></tr>
+<tr><td><code>os.confirm(title, message, {ok, cancel}?)</code></td><td>Promise&lt;boolean&gt; ของ dialog ระบบ <code>ok</code> ค่าเริ่มต้น "OK", <code>cancel</code> ค่าเริ่มต้น "Cancel" (<code>''</code> = ไม่มีปุ่ม cancel) ถ้าออกจากแอปขณะเปิดอยู่ จะ resolve <code>false</code></td></tr>
+<tr><td><code>os.alert(title, message)</code></td><td>Promise&lt;void&gt; dialog ปุ่มเดียว (แตะพื้นหลังเพื่อปิดได้)</td></tr>
+<tr><td><code>alert(message)</code></td><td>= <code>os.alert('', message)</code> (ไม่ block)</td></tr>
+<tr><td><code>os.on(name, fn)</code></td><td>ฟัง event ของ OS/แอป คืนฟังก์ชันยกเลิก</td></tr>
+<tr><td><code>os.emit(name, data)</code></td><td>ส่ง event (data ต้อง serialize เป็น JSON ได้) ส่งใน tick ถัดไป</td></tr>
+<tr><td><code>os.privileged</code></td><td>true ใน system app และ boot screen</td></tr>
+<tr><td><code>os.theme()</code></td><td><code>"dark"</code> หรือ <code>"light"</code> ตาม registry</td></tr>
+<tr><td><code>os.sd.info()</code></td><td><code>{mounted, total, free, type, name}</code> (<code>type</code> = <code>"FLASH"</code> เมื่อใช้ flash ภายใน)</td></tr>
+<tr><td><code>os.sd.format()</code></td><td>system เท่านั้น: factory reset (ดู <a href="../concepts/os.html#factory-reset">iotdash OS</a>)</td></tr>
+<tr><td><code>os.uninstall(id)</code></td><td>system เท่านั้น: ลบ <code>/applications/&lt;id&gt;</code> ทั้งโฟลเดอร์ Throw ถ้าแอปกำลังรัน</td></tr>
+<tr><td><code>os.store.install({id, url, version?, version_id?, store?, size?})</code></td><td>system เท่านั้น: ดาวน์โหลดแพ็กเกจ <a href="file-formats.html#idbz">IDBZ</a> จาก <code>url</code> ลงการ์ดทีละไฟล์ (ตรวจ SHA-256) แล้วแทนไฟล์ของแอป (ข้อมูลอยู่ครบ) Promise&lt;{id, version}&gt; Reject: <code>"app.idb: checksum mismatch (damaged download)"</code>, <code>"the download ended early"</code>, <code>"the server answered 404"</code>, <code>"the package is the app 'x', not 'y'"</code>, <code>"the app is open: close it first"</code>, <code>"not enough space for … KB"</code>, <code>"cancelled"</code></td></tr>
+<tr><td><code>os.store.cancel(id)</code></td><td>หยุดการติดตั้งที่กำลังดาวน์โหลด (ไฟล์เดิมไม่ถูกแตะ)</td></tr>
+<tr><td><code>os.store.download(url, path)</code></td><td>system เท่านั้น: ไฟล์เล็กที่แอป Apps เก็บ (ไอคอน) <code>path</code> ต้องอยู่ใต้ <code>/system/data/store/</code> Promise&lt;{path, size}&gt;</td></tr>
+<tr><td><code>os.store.on(fn)</code></td><td>= <code>os.on('install', fn)</code></td></tr>
+</table>
+<h3>Event ที่ OS ส่ง</h3>
+<table>
+<tr><th>ชื่อ</th><th>ข้อมูล</th><th>เมื่อ</th></tr>
+<tr><td><code>registry</code></td><td><code>{key, value}</code></td><td>registry เปลี่ยน (clear: key และ value เป็น null)</td></tr>
+<tr><td><code>apps</code></td><td><code>{id}</code></td><td>แอปถูกติดตั้ง/ลบจากคอมพิวเตอร์ (home ใช้ refresh)</td></tr>
+<tr><td><code>net</code></td><td><code>{wifi, internet, bt}</code> (เหมือน <code>os.net.state()</code>)</td><td>สถานะ Wi-Fi, อินเทอร์เน็ต หรือ power ของ Bluetooth เปลี่ยน</td></tr>
+<tr><td><code>bt</code></td><td>ดู <a href="#bt-events">event ของ Bluetooth</a></td><td>notify, หลุด, เจออุปกรณ์, สถานะ</td></tr>
+<tr><td><code>install</code></td><td><code>{id, state: "downloading" | "installed" | "failed", got, total, error?}</code></td><td>การติดตั้งจาก store เริ่ม, ทุก ~150 ms ระหว่างดาวน์โหลด, จบ</td></tr>
+</table>
+
+<h2 id="net">os.net, os.wifi, os.bt (การเชื่อมต่อ)</h2>
+<p>คำขอทุกตัวคืน Promise ที่ reject ด้วย <code>Error</code> ข้อความจาก radio (เช่น <code>"Wi-Fi is off"</code>, <code>"not connected"</code>) ส่วน <code>state()</code> เป็น synchronous: สิ่งที่ OS ได้ยินจาก radio ล่าสุด การเปลี่ยนการเชื่อมต่อทำได้เฉพาะหน้าของระบบ (Settings) ภาพรวมและ policy อยู่ที่ <a href="../core/connectivity.html">Wi-Fi และ Bluetooth</a></p>
+<h3><code>os.net</code></h3>
+<table>
+<tr><th>API</th><th>คืนค่า / คำอธิบาย</th></tr>
+<tr><td><code>os.net.state()</code></td><td><code>{wifi, internet, bt}</code>: <code>wifi</code> = <code>os.wifi.state()</code>, <code>bt</code> = <code>os.bt.state()</code></td></tr>
+<tr><td><code>os.net.online()</code></td><td><code>true</code> | <code>false</code> | <code>null</code> (ยังไม่รู้) จากการตรวจอินเทอร์เน็ตของ OS</td></tr>
+<tr><td><code>os.net.check()</code></td><td>Promise&lt;boolean&gt;: ตรวจเดี๋ยวนี้ (<code>false</code> ทันทีถ้า Wi-Fi ไม่ได้ต่อ)</td></tr>
+<tr><td><code>os.net.on(fn)</code></td><td>= <code>os.on('net', fn)</code> คืนฟังก์ชันยกเลิก</td></tr>
+</table>
+<h3><code>os.wifi</code></h3>
+<table>
+<tr><th>API</th><th>สิทธิ์</th><th>คืนค่า / คำอธิบาย</th></tr>
+<tr><td><code>os.wifi.state()</code></td><td>ทุกแอป</td><td><code>{power, state, ssid, ip, rssi, mac, error}</code>; <code>state</code> = <code>off</code> | <code>idle</code> | <code>connecting</code> | <code>connected</code> | <code>failed</code> (<code>mac</code> มีเฉพาะบนบอร์ด)</td></tr>
+<tr><td><code>os.wifi.scan()</code></td><td>ทุกแอป</td><td><code>[{ssid, rssi, secure, channel}]</code> แรงสุดก่อน, SSID ละหนึ่งรายการ</td></tr>
+<tr><td><code>os.wifi.saved()</code></td><td>ทุกแอป</td><td><code>[{ssid}]</code> ใช้ล่าสุดก่อน (ไม่มีรหัส)</td></tr>
+<tr><td><code>os.wifi.connect(ssid, pass?)</code></td><td>system</td><td>เริ่มต่อแล้ว resolve ทันที ผลมาทาง event <code>net</code>; ไม่ส่ง <code>pass</code> = ใช้รหัสที่บันทึกไว้; บันทึกเมื่อต่อสำเร็จ</td></tr>
+<tr><td><code>os.wifi.disconnect()</code></td><td>system</td><td>เลิกต่อ (ไม่ลบที่บันทึก)</td></tr>
+<tr><td><code>os.wifi.forget(ssid)</code></td><td>system</td><td>ลบจากที่บันทึก และเลิกต่อถ้ากำลังใช้อยู่</td></tr>
+<tr><td><code>os.wifi.power(on)</code></td><td>system</td><td>เปิด/ปิด radio และบันทึก <code>wifi.enabled</code> (เปิดแล้วต่ออัตโนมัติ)</td></tr>
+</table>
+<h3><code>os.bt</code> (Bluetooth LE central)</h3>
+<table>
+<tr><th>API</th><th>สิทธิ์</th><th>คืนค่า / คำอธิบาย</th></tr>
+<tr><td><code>os.bt.state()</code></td><td>ทุกแอป</td><td><code>{power, scanning, connected: [{id, name}]}</code></td></tr>
+<tr><td><code>os.bt.scan({ms = 8000}?)</code></td><td>ทุกแอป</td><td><code>[{id, name, rssi, type, services}]</code> แรงสุดก่อน; ระหว่าง scan มี event <code>found</code></td></tr>
+<tr><td><code>os.bt.stop()</code></td><td>ทุกแอป</td><td>หยุด scan (scan ที่ค้างได้ <code>[]</code>)</td></tr>
+<tr><td><code>os.bt.devices()</code></td><td>ทุกแอป</td><td>อุปกรณ์ที่จำไว้ <code>[{id, name, type}]</code> ล่าสุดก่อน</td></tr>
+<tr><td><code>os.bt.connect(id)</code></td><td>ทุกแอป</td><td><code>{id, name, type, mtu, services: [{uuid, chars: [{uuid, props}]}]}</code>; <code>props</code> ⊂ <code>read</code>, <code>write</code>, <code>writeNoResponse</code>, <code>notify</code>, <code>indicate</code>; ต่อสำเร็จแล้วถูกจำ</td></tr>
+<tr><td><code>os.bt.disconnect(id)</code></td><td>ทุกแอป</td><td>ตัดการเชื่อมต่อ (หรือยกเลิกที่กำลังต่อ)</td></tr>
+<tr><td><code>os.bt.read(id, service, char)</code></td><td>ทุกแอป</td><td><code>Uint8Array</code> (≤ 512 byte)</td></tr>
+<tr><td><code>os.bt.write(id, service, char, data, response = true)</code></td><td>ทุกแอป</td><td><code>data</code>: string (UTF-8), <code>ArrayBuffer</code>, typed array หรือ array ของตัวเลข; <code>response: false</code> = write without response</td></tr>
+<tr><td><code>os.bt.subscribe(id, service, char)</code>, <code>unsubscribe(…)</code></td><td>ทุกแอป</td><td>เปิด/ปิด notify (หรือ indicate) ข้อมูลมาทาง event <code>notify</code></td></tr>
+<tr><td><code>os.bt.forget(id)</code></td><td>system</td><td>ลบจากที่จำไว้และตัดการเชื่อมต่อ</td></tr>
+<tr><td><code>os.bt.power(on)</code></td><td>system</td><td>เปิด/ปิดและบันทึก <code>bt.enabled</code> (ปกติไม่ต้องเรียก: คำขอ <code>bt.*</code> แรกเปิด radio ให้เอง)</td></tr>
+<tr><td><code>os.bt.on(fn)</code></td><td>ทุกแอป</td><td>= <code>os.on('bt', …)</code> ที่เติม <code>bytes</code> และ <code>text</code> ให้ event ที่มีข้อมูล คืนฟังก์ชันยกเลิก</td></tr>
+</table>
+<h3 id="bt-events">Event ของ Bluetooth</h3>
+<table>
+<tr><th><code>type</code></th><th>ข้อมูล</th></tr>
+<tr><td><code>notify</code></td><td><code>{id, service, char, data, bytes, text}</code>: <code>data</code> เป็น hex, <code>bytes</code> เป็น <code>Uint8Array</code>, <code>text</code> คือ byte ละหนึ่งตัวอักษร (ไม่ decode UTF-8)</td></tr>
+<tr><td><code>disconnected</code></td><td><code>{id, reason}</code> อุปกรณ์ที่ต่ออยู่หลุด</td></tr>
+<tr><td><code>found</code></td><td><code>{device: {id, name, rssi, type, services}}</code> ระหว่าง scan</td></tr>
+<tr><td><code>state</code></td><td><code>{power, scanning, connected}</code></td></tr>
+</table>
+<pre><code><span class="c">// ตาชั่ง BLE ที่ส่งน้ำหนักเป็นข้อความทาง notify</span>
+const id = 'c8:2e:18:a4:01:5d';
+const dev = await os.bt.connect(id);
+const svc = dev.services.find((s) =&gt; s.chars.some((c) =&gt; c.props.includes('notify')));
+const chr = svc.chars.find((c) =&gt; c.props.includes('notify'));
+os.bt.on((e) =&gt; {
+  if (e.type === 'notify' &amp;&amp; e.id === id) show(parseFloat(e.text.replace(/[^0-9.+-]/g, '')));
+  if (e.type === 'disconnected' &amp;&amp; e.id === id) reconnectLater();
+});
+await os.bt.subscribe(id, svc.uuid, chr.uuid);
+if (!os.net.online()) os.alert('Offline', 'No internet: the data will not be sent');</code></pre>
+
+<h2 id="iot">iot (helper ของ engine)</h2>
+<table>
+<tr><th>API</th><th>คำอธิบาย</th></tr>
+<tr><td><code>iot.go(target, transition?)</code></td><td>เปิด URL ใน bundle หรือ <code>#hash</code> โดยตรง (ไม่ผ่าน navigation stack ของ OS ควรใช้ <code>navigate()</code> ในแอป)</td></tr>
+<tr><td><code>iot.back()</code></td><td>ย้อนประวัติของ engine</td></tr>
+<tr><td><code>iot.replace(selector, html, outer?)</code></td><td>แทน innerHTML/outerHTML ของ element ด้วย native parser (เร็วกว่าการสร้าง DOM ทีละ node)</td></tr>
+<tr><td><code>iot.stats()</code></td><td><code>{fps, frames, frameMs, styleMs, layoutMs, paintMs, damagePx, jsKB}</code></td></tr>
+<tr><td><code>iot.gc()</code></td><td>บังคับ GC ของ QuickJS</td></tr>
+</table>
+
+<h2 id="runtime">ข้อต่างจาก browser ที่ควรรู้</h2>
+<ul>
+  <li><b><code>Function.prototype.toString()</code></b> ไม่คืน source ของฟังก์ชัน: ได้รูป <code>function name() { [native code] }</code> เสมอ เพราะ QuickJS ของ iotdash ไม่เก็บ source text (ประหยัดหน่วยความจำ ดู <a href="../core/js-runtime.html#nosource">JavaScript runtime</a>) โค้ดหรือ library ที่อ่าน source ของฟังก์ชัน (serialize ฟังก์ชัน, หาชื่อ parameter) จะใช้ไม่ได้ ส่วน <code>new Function('…')</code> และ <code>eval</code> ยังใช้ได้</li>
+  <li><b><code>Date</code></b> ได้เวลาจริงหลัง Wi-Fi ต่อครั้งแรก (NTP, เขตเวลาไทย) ก่อนนั้นยังเป็นปี 1970 ข้อมูลที่ต้องประทับเวลาควรตรวจปีก่อน</li>
+  <li><b><code>fetch()</code></b> รับ option <code>timeout</code> (ms, ค่าเริ่มต้น 15000) และคืนคำตอบ 4xx/5xx พร้อม body ตามปกติ (ดู <a href="../core/js-runtime.html#fetch">fetch</a>)</li>
+</ul>
+
+<h2 id="example">ตัวอย่างรวม</h2>
+<pre><code><span class="c">// main.js ของแอปที่ poll ข้อมูลและบันทึก log</span>
+const out = document.getElementById('out');
+const last = localStorage.getItem('last');
+if (last) out.textContent = last;
+
+setBackgroundProcess('poll', 'APP', async () =&gt; {
+  try {
+    const r = await fetch('https://example.com/temp');
+    const t = (await r.json()).value;
+    localStorage.setItem('last', String(t));
+    fs.appendFile('log.csv', `${Date.now()},${t}\n`);
+    os.emit('temp', {t});
+  } catch (e) {
+    console.log('poll failed', e.message);
+  }
+  return 30000;
+});
+
+os.on('temp', ({t}) =&gt; { out.textContent = t; });
+os.on('registry', ({key}) =&gt; { if (key === 'darkMode') document.body.dataset.theme = os.theme(); });
+
+document.getElementById('clear').addEventListener('click', async () =&gt; {
+  if (await os.confirm('Clear log', 'Delete every reading?', {ok: 'Delete'})) fs.remove('log.csv');
+});</code></pre>
+</main>
+</body>
+</html>

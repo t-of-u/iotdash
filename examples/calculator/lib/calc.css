@@ -1,0 +1,26 @@
+body { overflow: hidden; display: flex; flex-direction: column; height: 100%; }
+
+.top { height: 56px; display: flex; align-items: center; gap: 10px; padding: 0 20px; }
+.top h1 { margin: 0 auto 0 0; font-size: 20px; font-weight: 600; }
+.chip { height: 38px; padding: 0 14px; border-radius: 19px; display: flex; align-items: center; gap: 6px;
+  background: var(--surface); box-shadow: var(--shadow); font-size: 15px; font-weight: 600; color: var(--text); }
+.chip:active { opacity: .7; }
+.chip.icon { width: 38px; padding: 0; justify-content: center; font-size: 22px; }
+
+.display { margin: 0 20px; padding: 10px 20px 12px; height: 104px; border-radius: 18px; background: var(--surface);
+  box-shadow: var(--shadow); display: flex; flex-direction: column; justify-content: flex-end; align-items: flex-end; }
+.expr { font-size: 18px; color: var(--muted); height: 26px; white-space: nowrap; overflow: hidden; max-width: 100%; }
+.value { font-size: 44px; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; max-width: 100%; }
+.value.error { color: var(--danger); }
+
+.keys { flex: 1; display: grid; gap: 10px; padding: 14px 20px 18px; }
+.key { border-radius: 14px; display: flex; align-items: center; justify-content: center; font-size: 24px; font-weight: 500;
+  background: var(--surface); color: var(--text); box-shadow: var(--shadow); transition: transform .08s; }
+.key:active { transform: scale(.95); opacity: .85; }
+.key.fn { background: var(--surface-2); font-size: 19px; }
+.key.op { color: #ea580c; font-size: 28px; }
+.key.eq { background: #ea580c; color: #fff; font-size: 28px; }
+.key.clear { color: var(--danger); }
+@media (prefers-color-scheme: dark) {
+  .key.op { color: #fb923c; }
+}

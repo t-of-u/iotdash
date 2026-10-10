@@ -1,0 +1,8 @@
+# Lambda layer for the IOTStore function (python3.13, x86_64).
+# Build (see scripts/infra/create_function.sh):
+#   python3.13 -m pip install -r layers/iotstore.txt \
+#     --platform manylinux2014_x86_64 --implementation cp --python-version 3.13 \
+#     --only-binary=:all: --upgrade --target python/
+# boto3 is not listed: the Lambda Python runtime ships it.
+bcrypt
+PyJWT

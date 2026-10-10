@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="/system/theme.css">
+<link rel="stylesheet" href="main.css">
+</head>
+<body>
+<div class="os-header">
+  <h1>Apps</h1>
+  <div class="status" id="status"></div>
+  <div class="h-btn" id="refresh"><svg width="20" height="20" viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/></svg></div>
+</div>
+<div class="layout">
+  <nav class="tabs">
+    <div class="tab on" data-tab="store">
+      <span class="tile blue"><svg width="18" height="18" viewBox="0 0 24 24"><rect x="4" y="4" width="7" height="7" rx="2"/><rect x="13" y="4" width="7" height="7" rx="2"/><rect x="4" y="13" width="7" height="7" rx="2"/><path d="M16.5 13.5v6M13.8 17l2.7 2.7 2.7-2.7"/></svg></span>
+      <span class="tab-name">Store</span><span class="count" id="storeCount"></span>
+    </div>
+    <div class="tab" data-tab="installed">
+      <span class="tile green"><svg width="18" height="18" viewBox="0 0 24 24"><rect x="5" y="3" width="14" height="18" rx="3"/><path d="M9 12l2 2 4-4"/></svg></span>
+      <span class="tab-name">Installed</span><span class="count" id="installedCount"></span>
+    </div>
+    <div class="spacer"></div>
+    <div class="addr" id="addrBtn">
+      <div class="addr-label">Store address</div>
+      <div class="addr-value" id="addrValue">not set</div>
+    </div>
+  </nav>
+
+  <main class="panel" id="store">
+    <div class="banner" id="banner" hidden></div>
+    <div class="group os-card" id="storeList"></div>
+  </main>
+
+  <main class="panel" id="installed" hidden>
+    <div class="group os-card" id="installedList"></div>
+    <div class="note">Apps marked <b>USB</b> were copied onto the card by <code>iotdash.py app install</code>; the store can replace them with its version (their data stays).</div>
+  </main>
+</div>
+
+<!-- an app's versions -->
+<div class="sheet-bg" id="detail" hidden>
+  <div class="sheet big os-card">
+    <div class="sheet-head">
+      <img class="d-icon" id="dIcon" src="/system/assets/default-icon.img">
+      <div class="text">
+        <div class="sheet-title" id="dTitle"></div>
+        <div class="sheet-sub" id="dSub"></div>
+      </div>
+      <div class="x" id="dClose"><svg width="20" height="20" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></div>
+    </div>
+    <div class="d-desc" id="dDesc"></div>
+    <div class="d-list" id="dVersions"></div>
+  </div>
+</div>
+
+<!-- the store's address -->
+<div class="sheet-bg top" id="addrSheet" hidden>
+  <div class="sheet os-card">
+    <div class="sheet-head">
+      <div class="text"><div class="sheet-title">Store address</div><div class="sheet-sub">Where the store's API answers, e.g. https://store.example.com</div></div>
+      <div class="x" id="addrCancel"><svg width="20" height="20" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></div>
+    </div>
+    <div class="in-row">
+      <div class="in-field" id="addrField"><input type="text" id="addrInput" placeholder="http://192.168.1.10:9310" autocomplete="off"></div>
+      <div class="btn primary" id="addrOk">Save</div>
+    </div>
+    <div class="in-error" id="addrError"></div>
+  </div>
+</div>
+<div class="toast-wrap"><div class="toast" id="toast"></div></div>
+<script src="main.js"></script>
+</body>
+</html>

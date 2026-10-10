@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>เขียนแอป — iotdash docs</title>
+<link rel="stylesheet" href="../assets/docs.css">
+<script src="../assets/nav.js" defer></script>
+</head>
+<body>
+<nav id="sidebar"></nav>
+<main>
+<div class="crumb">คู่มือ</div>
+<h1>เขียนแอปสำหรับ iotdash</h1>
+<p class="lead">แอปคือโปรเจกต์ HTML/CSS/JS ธรรมดา อยู่ที่ไหนก็ได้ (ไม่ต้องอยู่ใน SDK) ที่เปิดใน Chromium ได้ตามปกติ เครื่องมือ build จะวัดหน้าใน Chromium แล้ว compile เป็น image เดียว (<code>app.idb</code>) พร้อม font และรูปที่แปลงแล้ว หน้านี้อธิบายโครงสร้าง, API ที่ใช้บ่อย, วิธีติดตั้ง และเทคนิคให้แอปเร็วและประหยัดหน่วยความจำบนบอร์ด โดยใช้ Calculator (<code>examples/calculator</code> ใน SDK) เป็นตัวอย่าง แอปเป็นของผู้เขียน: SDK ไม่ได้รวมแอปไว้ และ store ก็แค่เก็บแพ็กเกจ</p>
+<div id="toc"></div>
+
+<h2 id="quick">เริ่มเร็ว</h2>
+<pre><code>iotdash create hello             <span class="c"># โฟลเดอร์ hello/ จาก template (iotdash ต้องอยู่ใน PATH: ดู <a href="getting-started.html">ติดตั้ง</a>)</span>
+cd hello
+iotdash run                      <span class="c"># build + ลง simulator + เปิดแอป</span>
+iotdash run --device             <span class="c"># ลงบอร์ดผ่าน USB + เปิดแอป</span></code></pre>
+<p>หรือเขียนเองทั้งหมด: ขั้นต่ำคือ <code>app.json</code> กับ <code>main.html</code></p>
+<pre><code>{ "id": "hello", "title": "Hello", "version": "1.0" }      <span class="c">← app.json</span>
+
+&lt;!doctype html&gt;                                           <span class="c">← main.html</span>
+&lt;html&gt;&lt;head&gt;&lt;meta charset="utf-8"&gt;
+&lt;link rel="stylesheet" href="/system/theme.css"&gt;
+&lt;/head&gt;&lt;body&gt;
+  &lt;h1 id="t"&gt;สวัสดี&lt;/h1&gt;
+  &lt;script&gt;
+    document.getElementById('t').addEventListener('click', () =&gt; os.alert('Hello', 'tapped'));
+  &lt;/script&gt;
+&lt;/body&gt;&lt;/html&gt;</code></pre>
+
+<h2 id="structure">โครงสร้างของแอป</h2>
+<pre><code>calculator/                  <span class="c">ที่ไหนก็ได้ (ตัวอย่างนี้อยู่ใน examples/ ของ SDK)</span>
+  app.json                   <span class="c">{"id": "calculator", "title": "Calculator", "version": "1.0", "os": {"min": "0.1.0"}}</span>
+  icon.svg                   <span class="c">หรือ icon.png: แปลงเป็น icon.img 92 px; ไม่มี = default icon</span>
+  main.html                  <span class="c">หน้าแรก (ต้องมี)</span>
+  main.js
+  lib/calc.css, lib/calc.js  <span class="c">ไฟล์ที่ใช้ร่วมกันระหว่างหน้า</span>
+  pages/
+    scientific/main.html     <span class="c">navigate('scientific/main.html')</span>
+    history/main.html        <span class="c">navigate('history/main.html')</span>
+  README.md, LICENSE         <span class="c">ของโปรเจกต์ ไม่ใส่ใน image</span>
+  build/                     <span class="c">ที่คำสั่งสร้าง: app/ (app.idb, app.json, icon.img), &lt;id&gt;-&lt;version&gt;.idbz, ภาพ shot</span></code></pre>
+<table>
+<tr><th><code>app.json</code></th><th></th></tr>
+<tr><td><code>id</code></td><td>ชื่อแอปบนการ์ด (<code>/applications/&lt;id&gt;</code>) และ <code>app_id</code> ใน store: a–z, 0–9, <code>-</code> 2–40 ตัว (ไม่ใส่ = ชื่อโฟลเดอร์)</td></tr>
+<tr><td><code>title</code></td><td>ชื่อใต้ icon ที่ home</td></tr>
+<tr><td><code>version</code></td><td>เทียบเป็นตัวเลขทีละส่วน (<code>1.10</code> ใหม่กว่า <code>1.9</code>) เพิ่มทุกครั้งที่ปล่อยเวอร์ชันใหม่ขึ้น store</td></tr>
+<tr><td><code>description</code></td><td>คำอธิบาย (manifest ของแพ็กเกจ)</td></tr>
+<tr><td><code>os.min</code></td><td>OS เก่าสุดที่แอปรันได้ (ค่าเริ่มต้น = OS ของ SDK ที่ build) store ไม่เสนอเวอร์ชันนี้ให้บอร์ดที่ OS เก่ากว่า</td></tr>
+</table>
+<table>
+<tr><th>ไฟล์</th><th>เกิดอะไรตอน build</th></tr>
+<tr><td><code>.html .css .js .json .txt</code></td><td>ใส่ใน image ตามเดิม (ข้อความทั้งหมดถูกใช้หาตัวอักษรที่ต้องมีใน font)</td></tr>
+<tr><td><code>.png .jpg .gif .webp .bmp .svg</code></td><td>แปลงเป็น IMG1 (RGB565 + alpha) และย่อให้ไม่เกิน 2 เท่าของขนาดที่หน้าแสดงจริง SVG ขาวดำกลายเป็น mask (เปลี่ยนสีด้วย CSS ได้)</td></tr>
+<tr><td><code>.ttf .otf</code></td><td>ไม่ใช้ (font มาจาก atlas ที่ build สร้าง)</td></tr>
+<tr><td>อื่นๆ</td><td>ใส่ใน image ตามเดิม</td></tr>
+<tr><td>โฟลเดอร์ <code>build</code>, <code>.git</code>, <code>node_modules</code>, ไฟล์ขึ้นต้นด้วยจุด, <code>README.md</code>, <code>LICENSE</code>, <code>CHANGELOG.md</code>, <code>icon.*</code> ระดับบนสุด</td><td>ข้าม</td></tr>
+</table>
+<p>เครื่องมือเพิ่ม <code>manifest.json</code> (รายการ font), <code>fonts/*.fnt</code>, และ <code>thai.dict</code> (คำไทยที่ใช้ตัดบรรทัด) ลงใน image เอง ส่วน <code>app.json</code> บนการ์ดจะได้ <code>id</code>, <code>hash</code>, <code>size</code>, <code>built</code> เพิ่ม</p>
+
+<h3>Path ที่หน้าเห็น</h3>
+<table>
+<tr><th>Path</th><th>ชี้ไปที่</th></tr>
+<tr><td><code>/system/theme.css</code></td><td>theme ของระบบ (สี, dark mode) ใช้ร่วมได้ทุกแอป</td></tr>
+<tr><td>relative เช่น <code>lib/calc.css</code>, <code>../../lib/calc.js</code></td><td>ไฟล์ในแอปเดียวกัน (resolve จากหน้าปัจจุบัน)</td></tr>
+<tr><td><code>fetch('data.json')</code></td><td>ไฟล์ใน image (อ่านอย่างเดียว)</td></tr>
+<tr><td><code>open('x.txt')</code>, <code>fs.readFile('x')</code></td><td><code>/applications/&lt;id&gt;/data/x</code> บน storage (อ่านเขียนได้)</td></tr>
+</table>
+
+<h2 id="pages">หน้าและการนำทาง</h2>
+<ul>
+  <li>หน้าแรกคือ <code>main.html</code> หน้าอื่นต้องอยู่ใต้ <code>pages/</code></li>
+  <li><code>navigate('history/main.html')</code> เปิดหน้าใหม่ (slide ไปซ้าย) <code>navigate(-1)</code> หรือ <code>history.back()</code> ย้อนกลับ</li>
+  <li><code>&lt;a href="pages/x/main.html"&gt;</code> ก็ใช้ได้ (ผ่าน navigation stack เหมือนกัน) <code>&lt;a href="#back"&gt;</code> หรือ <code>data-back</code> ย้อนกลับ</li>
+  <li>ทุกหน้าเริ่มด้วย JS ใหม่ทั้งหมด ข้อมูลที่ต้องส่งข้ามหน้าเก็บใน <code>localStorage</code>, ไฟล์ หรือ APP process (+ <code>os.emit</code>)</li>
+  <li>การย้อนกลับเปิดหน้านั้นใหม่ (ไม่ได้คืน DOM เดิม): หน้าที่ย้อนกลับมาต้องอ่านสถานะจาก storage ตอนเริ่ม</li>
+  <li>ปุ่ม back ของระบบบนหน้าแรกจะถามว่าจะปิดแอปไหม</li>
+</ul>
+
+<h2 id="data">เก็บข้อมูล</h2>
+<table>
+<tr><th>ต้องการ</th><th>ใช้</th><th>ตัวอย่างใน Calculator</th></tr>
+<tr><td>สถานะเล็กๆ ที่อยู่ข้ามหน้าและข้ามการเปิดแอป</td><td><code>localStorage</code></td><td><code>expr</code>, <code>ans</code>, <code>count</code></td></tr>
+<tr><td>ข้อมูลยาว, log, ไฟล์ binary</td><td><code>open(path, mode)</code>, <code>fs.*</code></td><td><code>history.txt</code> (append ทีละบรรทัด), <code>stats.json</code></td></tr>
+<tr><td>ค่าตั้งของระบบ</td><td><code>registry.get('darkMode')</code>, <code>os.theme()</code></td><td>–</td></tr>
+<tr><td>สถานะชั่วคราวในหน้าเดียว</td><td>ตัวแปร JS หรือ <code>sessionStorage</code></td><td>–</td></tr>
+</table>
+<pre><code><span class="c">// ต่อท้ายไฟล์ทีละบรรทัด</span>
+const f = open('history.txt', 'a');
+f.writeLine(`${expression} = ${result}`);
+f.close();
+
+<span class="c">// อ่านทั้งไฟล์ / JSON</span>
+const lines = fs.exists('history.txt') ? open('history.txt', 'r').readLines() : [];
+fs.writeJSON('stats.json', {count, updated: Date.now()});</code></pre>
+<div class="warn"><p>ค่าใน <code>localStorage</code> อยู่ถาวร: ถ้าเก็บสิ่งที่อยู่บนจอไว้ (เช่นตัวเลขที่กำลังพิมพ์) เมื่อปิดแล้วเปิดแอปใหม่จะเห็นค่าเดิม ถ้าต้องการให้เริ่มใหม่ทุกครั้งที่เปิด ให้เก็บใน APP process หรือรอ sessionStorage ระดับแอป (ดู <a href="../project/known-issues.html">ข้อจำกัด</a>)</p></div>
+
+<h2 id="background">งานเบื้องหลัง</h2>
+<pre><code><span class="c">// ทำงานต่อแม้เปลี่ยนหน้า จนกว่าจะออกจากแอป</span>
+setBackgroundProcess('stats', 'APP', () =&gt; {
+  const count = +localStorage.getItem('count') || 0;
+  let saved = -1;
+  try { saved = fs.readJSON('stats.json').count; } catch (_) {}
+  if (saved !== count) fs.writeJSON('stats.json', {count, updated: Date.now()});
+}, 2000);
+
+<span class="c">// เฉพาะหน้านี้ (เช่นนาฬิกาบน home)</span>
+setBackgroundProcess('clock', 'PAGE', tick, 1000);</code></pre>
+<ul>
+  <li>งานทั้งหมดของแอป (timer + process) ได้งบ 10 ms ต่อ tick ส่วนที่เกินรอ tick ถัดไป</li>
+  <li>callback ที่รันเกิน 3 วินาทีถูกหยุด process/interval นั้นถูกปิดถาวร</li>
+  <li>process แบบ APP ที่สร้างในหน้าหนึ่งจะทำให้ JS realm ของหน้านั้นค้างในหน่วยความจำ (~400 KB) สร้าง APP process เฉพาะเมื่อจำเป็น และอย่าให้ closure ถืออ้างอิง DOM ของหน้า</li>
+</ul>
+
+<h2 id="os-api">ใช้ OS</h2>
+<pre><code>const ok = await os.confirm('Delete?', 'This cannot be undone', {ok: 'Delete', cancel: 'Keep'});
+await os.alert('Saved', 'Your file is saved');
+os.home();              <span class="c">// ถามก่อนปิด; os.home(false) = ปิดทันที</span>
+os.page();              <span class="c">// {id, title, page, depth, system, …}</span>
+os.on('registry', ({key, value}) =&gt; { if (key === 'darkMode') redraw(); });
+fetch('https://api.example.com/x').then((r) =&gt; r.json());   <span class="c">// ต้องต่อ WiFi</span></code></pre>
+<p>รายการ API ทั้งหมดอยู่ใน <a href="../reference/js-api.html">JavaScript API ของ OS</a></p>
+
+<h3 id="net">อินเทอร์เน็ตและ Bluetooth</h3>
+<ul>
+  <li>แอปไม่ได้เปลี่ยนการเชื่อมต่อเอง (สวิตช์, เลือกเครือข่าย, รหัส เป็นของ Settings) แต่อ่านสถานะได้: <code>os.net.online()</code>, <code>os.net.on(fn)</code>, <code>os.wifi.state()</code> ถ้าแอปใช้งานไม่ได้เมื่อไม่มีเน็ต ให้บอกผู้ใช้พร้อมปุ่ม <code>os.launch('settings')</code> (เช่น popup ที่บังหน้าจอจนกว่าอินเทอร์เน็ตจะกลับมา)</li>
+  <li>อุปกรณ์ BLE ใช้ได้เต็มที่: <code>os.bt.scan()</code>, <code>connect()</code>, <code>subscribe()</code>, <code>write()</code> Bluetooth เปิดเองเมื่อเรียกครั้งแรก อุปกรณ์ที่ต่อสำเร็จถูกจำไว้ (<code>os.bt.devices()</code>) ต้องรับมือ event <code>disconnected</code> และต่อใหม่เอง</li>
+  <li><code>Date</code> เป็นเวลาจริงหลัง Wi-Fi ต่อครั้งแรกเท่านั้น (NTP) และ <code>Function.prototype.toString()</code> ไม่คืน source (ดู <a href="../reference/js-api.html#runtime">ข้อต่างจาก browser</a>)</li>
+</ul>
+
+<h2 id="theme">Theme และ dark mode</h2>
+<p>link <code>/system/theme.css</code> แล้วใช้ตัวแปร:</p>
+<table>
+<tr><th>ตัวแปร</th><th>ใช้กับ</th></tr>
+<tr><td><code>--bg</code>, <code>--surface</code>, <code>--surface-2</code></td><td>พื้นหลังหน้า, การ์ด, พื้นรอง</td></tr>
+<tr><td><code>--text</code>, <code>--muted</code>, <code>--line</code></td><td>ข้อความ, ข้อความรอง, เส้นแบ่ง</td></tr>
+<tr><td><code>--accent</code>, <code>--accent-text</code>, <code>--accent-soft</code></td><td>สีหลัก</td></tr>
+<tr><td><code>--danger</code>, <code>--danger-soft</code>, <code>--ok</code></td><td>สถานะ</td></tr>
+<tr><td><code>--radius</code>, <code>--shadow</code></td><td>มุมและเงาของการ์ด</td></tr>
+</table>
+<p>dark mode ของระบบ (registry <code>darkMode</code>) ทำให้ <code>@media (prefers-color-scheme: dark)</code> เป็นจริงในทุกหน้า theme.css กำหนดค่าตัวแปรชุดมืดไว้แล้ว ถ้ามีสีของแอปเองให้เพิ่ม media query แบบเดียวกัน (เหมือน <code>.key.op</code> ใน Calculator)</p>
+
+<h2 id="fonts">Font</h2>
+<ul>
+  <li>family ที่มี: <b>Inter</b> (ค่าเริ่มต้นของ sans-serif ทุกชื่อ), <b>Noto Sans Thai</b>, <b>JetBrains Mono</b> (monospace) ไทยใช้ Noto Sans Thai เป็น fallback อัตโนมัติ</li>
+  <li>ทุก (family, weight, size) ที่หน้าใช้จะกลายเป็น atlas หนึ่งไฟล์ในแอป <b>ยกเว้น</b>ขนาดที่ system image มีอยู่แล้ว (แอปใช้ร่วมกับระบบ ไม่ต้องพกเอง)</li>
+</ul>
+<p>ขนาดที่ system มีในตอนนี้ (จาก <code>os/build/system-fonts.json</code>, เปลี่ยนได้เมื่อหน้าของระบบเปลี่ยน):</p>
+<table>
+<tr><th>Family / weight</th><th>ขนาด (px)</th></tr>
+<tr><td>Inter 400</td><td>13, 14, 15, 16, 18, 20, 21, 24, 40</td></tr>
+<tr><td>Inter 500</td><td>15, 16</td></tr>
+<tr><td>Inter 600</td><td>13, 15, 16, 18, 20, 24, 30, 44</td></tr>
+<tr><td>Inter 700</td><td>16</td></tr>
+<tr><td>JetBrains Mono 400</td><td>13</td></tr>
+</table>
+<div class="note"><p>เลือกขนาดจากตารางนี้เมื่อทำได้: image เล็กลง, โหลดเร็วขึ้น และไม่มี atlas เพิ่มในแอป (font ทุกขนาดถูกโหลดเข้า RAM ใหม่ต่อ document และกิน ≈26 KB ต่อ face ไม่ว่าจะเป็นของระบบหรือของแอป ดู <a href="#memory">หน่วยความจำ</a>) ขนาดที่ใหญ่กว่า 34 px ได้เฉพาะตัวอักษรที่หน้าใช้จริงที่ขนาดนั้น ถ้า JS สร้างข้อความใหม่ที่ขนาดใหญ่ (เช่นตัวอักษรที่ไม่เคยอยู่ในไฟล์) ตัวนั้นจะไม่แสดง ใส่ตัวอย่างข้อความไว้ใน HTML (เช่น element ที่ <code>display: none</code>) เพื่อให้ build รู้</p></div>
+
+<h2 id="memory">ประหยัดหน่วยความจำ</h2>
+<p>บทเรียนจากแอปตาชั่งขนาดใหญ่ที่เคยทำให้ PSRAM เหลือ 15 KB (ฝั่ง engine แก้ไปแล้ว ดู <a href="../core/memory-storage.html#diet">หน่วยความจำและ storage</a>):</p>
+<table>
+<tr><th>ทำ</th><th>เพราะ</th></tr>
+<tr><td><b>ส่งรูปที่ขนาดแสดงจริง</b></td><td>build เก็บรูปได้ถึง 2 เท่าของขนาดใหญ่สุดที่หน้าแสดง แล้วรูปถูก decode เป็น RGB565 + alpha (3 byte ต่อ pixel) ใน RAM: โลโก้ที่แสดง 84 px แต่ส่งไฟล์ 276 px กลายเป็น 168 px = 85 KB ใน RAM ส่งที่ 84 px เหลือ 21 KB</td></tr>
+<tr><td><b>ใช้ขนาด font ของระบบ</b></td><td>ทุก (weight, size) ที่หน้าใช้กินตาราง ≈26 KB (ไทย ≈14 KB) ตลอดเวลาที่หน้านั้นเปิด + bitmap ของ glyph ขนาดของระบบดูใน <a href="#fonts">ตารางด้านบน</a> (Inter 400: 13/14/15/16/18/20/21/24/40, 500: 15/16, 600: 13/15/16/18/20/24/30/44, 700: 16)</td></tr>
+<tr><td><b>ประกาศขนาดตัวอักษรที่ script สร้างทีหลังไว้ใน element ที่ซ่อน</b></td><td>build อ่าน font ของทุก element รวมที่ <code>display: none</code> แต่บอร์ดไม่ต้อง layout มัน เช่น <code>&lt;div id="kit"&gt;&lt;div class="big-num"&gt;- 0123456789.,&lt;/div&gt;&lt;/div&gt;</code> + <code>#kit { display: none }</code> ทำให้ตัวเลข 64 px ที่ JS สร้างทีหลังมี glyph (ใช้กับรูปไม่ได้: build ไม่วัดขนาดรูปที่ซ่อนอยู่)</td></tr>
+<tr><td>ลบ listener และ reference ของจอเก่าเมื่อสร้างจอใหม่ด้วย <code>innerHTML</code></td><td>wrapper ที่ติด cycle รอ GC (ระบบเรียก GC เองหลังเปลี่ยนจอ ≈35 ms) element ที่ถูกถอดไม่ถือ computed style แล้ว แต่ยังถือ DOM และข้อมูล layout</td></tr>
+<tr><td>ดูตัวเลขระหว่างพัฒนา</td><td><code>mem [tag]</code> ใน script ของ sim ทุกหน้าจอ, <code>psram</code> ใน stats บนบอร์ด และเดินจอเดิมซ้ำหลายรอบดูว่าคงที่</td></tr>
+</table>
+
+<h2 id="performance">ทำให้เร็วบนบอร์ด</h2>
+<table>
+<tr><th>ทำ</th><th>เพราะ</th></tr>
+<tr><td>ให้ element ที่เปลี่ยนบ่อยมีขนาดตายตัว (เช่น <code>height: 104px</code> ของช่องแสดงผล, flex item ขนาด px ไม่ grow)</td><td>engine layout ใหม่เฉพาะกล่องนั้นได้ (relayout boundary) แทนทั้งหน้า</td></tr>
+<tr><td>ใช้ <code>white-space: nowrap; overflow: hidden</code> กับข้อความที่เปลี่ยนบ่อย</td><td>ความยาวข้อความไม่ไปเปลี่ยนขนาดกล่อง</td></tr>
+<tr><td>หลีกเลี่ยง selector ที่ขึ้นกับสถานะของบรรพบุรุษหรือพี่น้อง (<code>.a:active .b</code>, <code>:hover + x</code>, <code>:has()</code>)</td><td>ทำให้การกดหนึ่งครั้งต้อง restyle subtree หรือพี่น้องทั้งหมด</td></tr>
+<tr><td>เปลี่ยนเฉพาะ <code>textContent</code>/class ของ element ที่จำเป็น แทน <code>innerHTML</code> ทั้งก้อน</td><td>damage เล็ก วาดน้อย</td></tr>
+<tr><td>ระวัง <code>box-shadow</code> ขนาดใหญ่ + <code>transform</code>/<code>opacity</code> ที่ animate</td><td>วาดใหม่ทุกเฟรม (ปุ่มที่ <code>:active { transform: scale(.95) }</code> ใช้ paint ~25 ms)</td></tr>
+<tr><td>ใช้ขนาด font ที่ระบบมี และรูปไม่ใหญ่เกินที่แสดง</td><td>image เล็ก, PSRAM เหลือมาก</td></tr>
+<tr><td>งานหนักใน JS ให้แบ่งเป็นช่วง (process ที่คืน delay, หรือ await)</td><td>งบ 10 ms ต่อ tick และ watchdog 3 วินาที</td></tr>
+<tr><td>ตรวจด้วย stats</td><td><code>device stats</code> บอก style/layout/paint ms และจำนวน element ที่ถูก restyle ดู <a href="../tools/debugging.html#stats">การวัดผล</a></td></tr>
+</table>
+
+<h2 id="workflow">วงจรพัฒนา</h2>
+<ol>
+  <li>แก้ไฟล์ แล้ว <code>iotdash run</code> (simulator) หรือ <code>iotdash run --web</code> (เบราว์เซอร์)</li>
+  <li>เทียบกับ Chromium: <code>iotdash shot</code> (<code>--page pages/x/main.html</code>, <code>--dark</code>) ได้ <code>build/compare.png</code> (ซ้าย simulator, ขวา Chromium ที่มี stub ของ <code>os</code>, <code>fs</code>, <code>registry</code> และ font ของระบบ)</li>
+  <li>ลงบอร์ด: <code>iotdash run --device</code> (ข้อมูลเดิมของแอปยังอยู่; ถ้าแอปเปิดอยู่จะปิดก่อนแล้วเปิดใหม่)</li>
+  <li>ถ่ายจอจริง: <code>iotdash device shot out.png</code>, ดูตัวเลข: <code>iotdash device stats</code></li>
+  <li>ปล่อยเวอร์ชัน: เพิ่ม <code>version</code> แล้ว <code>iotdash pack</code> (ลองแพ็กเกจจริง: <code>iotdash install --pack build/&lt;id&gt;-&lt;ver&gt;.idbz</code>) แล้วอัปโหลดในเว็บของ store หรือ <code>iotdash publish --store URL</code></li>
+  <li>ถอนการติดตั้ง: <code>iotdash uninstall [--to device]</code> (ลบ memory.json และ data/ ด้วย)</li>
+</ol>
+<p>คำสั่งทั้งหมดอยู่ใน <a href="../reference/cli.html">เครื่องมือ command line</a></p>
+
+<h2 id="example">ตัวอย่างทั้งแอป: Calculator</h2>
+<ul>
+  <li><b>main.html</b>: แถบบน (ชื่อ + chip History/Scientific), ช่องแสดงผลสูง 104 px, grid ปุ่ม 4 × 5 ปุ่มใช้ <code>data-k</code> และ listener ตัวเดียวบน <code>#keys</code> (event delegation)</li>
+  <li><b>lib/calc.js</b>: <code>Calc.evaluate(expr, {ans})</code>, <code>Calc.format</code>, <code>saveHistory</code> (append ลง <code>history.txt</code>), <code>readHistory</code> ใช้ร่วมกันทุกหน้า</li>
+  <li><b>สถานะ</b>: <code>expr</code> และ <code>ans</code> ใน localStorage ทุกหน้าจึงเห็นค่าเดียวกัน</li>
+  <li><b>pages/scientific</b>: ปุ่มฟังก์ชัน (sin, cos, log, …) ใช้ <code>Calc</code> ตัวเดียวกัน</li>
+  <li><b>pages/history</b>: อ่าน <code>history.txt</code> แสดงเป็นรายการ scroll ได้ ปุ่ม Clear ถามด้วย <code>os.confirm</code></li>
+  <li><b>APP process</b> <code>stats</code>: เขียน <code>data/stats.json</code> ทุก 2 วินาทีเมื่อจำนวนการคำนวณเปลี่ยน แม้อยู่หน้าอื่น</li>
+</ul>
+</main>
+</body>
+</html>

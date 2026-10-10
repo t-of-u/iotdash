@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="/system/theme.css">
+<link rel="stylesheet" href="../../lib/calc.css">
+<style>
+  .display { height: 92px; }
+  .value { font-size: 38px; }
+  .keys { grid-template-columns: repeat(7, 1fr); grid-template-rows: repeat(5, 1fr); gap: 8px; padding-top: 12px; }
+  .key { font-size: 22px; }
+  .key.fn { font-size: 17px; }
+  .wide { grid-column: span 2; }
+</style>
+</head>
+<body>
+<div class="top">
+  <div class="chip icon" id="back">‹</div>
+  <h1>Scientific</h1>
+  <div class="chip" id="mode">DEG</div>
+</div>
+<div class="display">
+  <div class="expr" id="expr"></div>
+  <div class="value" id="value">0</div>
+</div>
+<div class="keys" id="keys">
+  <div class="key fn" data-k="sin(">sin</div><div class="key fn" data-k="cos(">cos</div><div class="key fn" data-k="tan(">tan</div>
+  <div class="key" data-k="7">7</div><div class="key" data-k="8">8</div><div class="key" data-k="9">9</div><div class="key op" data-k="÷">÷</div>
+
+  <div class="key fn" data-k="ln(">ln</div><div class="key fn" data-k="log(">log</div><div class="key fn" data-k="√(">√</div>
+  <div class="key" data-k="4">4</div><div class="key" data-k="5">5</div><div class="key" data-k="6">6</div><div class="key op" data-k="×">×</div>
+
+  <div class="key fn" data-k="²">x²</div><div class="key fn" data-k="^">xʸ</div><div class="key fn" data-k="π">π</div>
+  <div class="key" data-k="1">1</div><div class="key" data-k="2">2</div><div class="key" data-k="3">3</div><div class="key op" data-k="−">−</div>
+
+  <div class="key fn" data-k="(">(</div><div class="key fn" data-k=")">)</div><div class="key fn" data-k="e">e</div>
+  <div class="key" data-k="0">0</div><div class="key" data-k=".">.</div><div class="key fn" data-k="back">⌫</div><div class="key op" data-k="+">+</div>
+
+  <div class="key fn" data-k="!">n!</div><div class="key fn" data-k="Ans">Ans</div><div class="key fn clear" data-k="AC">AC</div>
+  <div class="key fn" data-k="%">%</div><div class="key eq wide" data-k="=">=</div><div class="key fn" data-k="EXP">EXP</div>
+</div>
+<script src="../../lib/calc.js"></script>
+<script src="main.js"></script>
+</body>
+</html>

@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ฮาร์ดแวร์และ flash — iotdash docs</title>
+<link rel="stylesheet" href="../assets/docs.css">
+<script src="../assets/nav.js" defer></script>
+</head>
+<body>
+<nav id="sidebar"></nav>
+<main>
+<div class="crumb">แกนระบบ (core)</div>
+<h1>ฮาร์ดแวร์และ flash</h1>
+<p class="lead">บอร์ด Waveshare ESP32-S3-Touch-LCD-7 (Rev 1.2): ขาที่ใช้, IO expander, การจัด partition ใน flash 16 MB, ค่า sdkconfig ที่ตั้งเพื่อให้จอนิ่งและให้ radio มี SRAM พอ และผลตรวจช่อง SD card ที่เสีย
+ค่าทั้งหมดในหน้านี้มาจาก <code>src/board.h</code>, <code>platformio.ini</code>, <code>partitions.csv</code></p>
+<div id="toc"></div>
+
+<h2 id="board">บอร์ดและชิป</h2>
+<div class="facts">
+  <div class="fact"><div class="v">ESP32-S3</div><div class="k">WROOM-1-N16R8, 2 core 240 MHz</div></div>
+  <div class="fact"><div class="v">16 MB</div><div class="k">flash แบบ quad (QIO)</div></div>
+  <div class="fact"><div class="v">8 MB</div><div class="k">PSRAM แบบ octal (OPI)</div></div>
+  <div class="fact"><div class="v">~512 KB</div><div class="k">SRAM ภายใน (ใช้ได้จริงหลัง IDF ประมาณ 300 KB)</div></div>
+  <div class="fact"><div class="v">800 × 480</div><div class="k">IPS 7", ST7262, RGB565 แบบขนาน</div></div>
+  <div class="fact"><div class="v">GT911</div><div class="k">capacitive touch สูงสุด 5 จุด</div></div>
+  <div class="fact"><div class="v">Wi-Fi + BLE</div><div class="k">Wi-Fi 2.4 GHz และ Bluetooth LE ในชิป (<a href="connectivity.html">รายละเอียด</a>)</div></div>
+</div>
+<div class="warn"><p><b>Flash และ PSRAM ใช้ bus MSPI เดียวกัน</b> ทุกครั้งที่อ่านหรือเขียน flash (โค้ดหรือข้อมูล) bus จะไม่ว่างให้ DMA ดึงภาพจาก PSRAM ไปที่จอ ข้อเท็จจริงนี้เป็นที่มาของการออกแบบหลายอย่างใน <a href="display.html">การแสดงผล</a> และ <a href="memory-storage.html">หน่วยความจำ</a></p></div>
+
+<h2 id="pins">ขาที่ใช้</h2>
+<h3>จอ RGB</h3>
+<table>
+<tr><th>สัญญาณ</th><th>GPIO</th></tr>
+<tr><td>HSYNC</td><td>46</td></tr>
+<tr><td>VSYNC</td><td>3</td></tr>
+<tr><td>DE</td><td>5</td></tr>
+<tr><td>PCLK</td><td>7 (active ขอบลง)</td></tr>
+<tr><td>DATA0–15 (B3–B7, G2–G7, R3–R7)</td><td>14, 38, 18, 17, 10, 39, 0, 45, 48, 47, 21, 1, 2, 42, 41, 40</td></tr>
+</table>
+<h3>Timing ของจอ</h3>
+<table>
+<tr><th>ค่า</th><th>แนวนอน</th><th>แนวตั้ง</th></tr>
+<tr><td>Active</td><td>800</td><td>480</td></tr>
+<tr><td>Pulse width / back porch / front porch</td><td>4 / 8 / 8</td><td>4 / 8 / 8</td></tr>
+<tr><td>รวม</td><td>820</td><td>500</td></tr>
+</table>
+<p>PCLK 16 MHz → 16e6 / (820 × 500) = <b>39 Hz</b> ถ้าเพิ่ม PCLK จะต้องใช้ bandwidth ของ PSRAM มากขึ้นตาม และ glitch จะกลับมา (ดู budget ใน <a href="display.html#budget">การแสดงผล</a>)</p>
+
+<h3>I2C, touch, SD, อื่นๆ</h3>
+<table>
+<tr><th>หน้าที่</th><th>GPIO</th><th>หมายเหตุ</th></tr>
+<tr><td>I2C SDA / SCL</td><td>8 / 9</td><td>400 kHz ใช้ร่วมกันระหว่าง CH422G และ GT911</td></tr>
+<tr><td>Touch INT</td><td>4</td><td>ใช้ตอน reset GT911 เพื่อเลือก address 0x5D (ปัจจุบันอ่านแบบ polling)</td></tr>
+<tr><td>SD MOSI / SCK / MISO</td><td>11 / 12 / 13</td><td>SPI2, MISO มี pull-up 10 kΩ บนบอร์ด</td></tr>
+<tr><td>SD CS</td><td>CH422G EXIO4</td><td>SPI driver สลับขานี้เองไม่ได้ จึงเลือกการ์ดค้างไว้ (เป็นอุปกรณ์เดียวบน bus)</td></tr>
+<tr><td>Sensor AD (J8 ขา 3)</td><td>6</td><td>ว่าง ใช้เป็น probe วัดแรงดันด้วย ADC (คำสั่ง <code>probe</code>)</td></tr>
+<tr><td>USB (19/20)</td><td>19 / 20</td><td>สลับไป CAN ได้ด้วย EXIO5</td></tr>
+<tr><td>UART0 TX/RX (43/44)</td><td>43 / 44</td><td>ผ่านสวิตช์ SW1 (UART_SEL) ไปที่ชิป USB-serial ซึ่งเป็นช่องของ dev link</td></tr>
+</table>
+
+<h2 id="ch422g">IO expander CH422G</h2>
+<p>CH422G ไม่มี I2C address ปกติ แต่ละ "address" คือคำสั่ง: <code>0x24</code> (WR_SET, bit0 = ให้ EXIO0–7 เป็น output), <code>0x38</code> (WR_IO, ระดับของ EXIO0–7), <code>0x26</code> (RD_IO, อ่านระดับขาจริงกลับมา ใช้ตรวจว่า CS เปลี่ยนจริง)</p>
+<table>
+<tr><th>ขา</th><th>หน้าที่</th><th>ค่าที่ตั้งตอน boot</th></tr>
+<tr><td>EXIO1</td><td>TP_RST (touch reset, active low)</td><td>ถูกกด reset ตอน <code>GT911::begin</code> แล้วปล่อยเป็น high</td></tr>
+<tr><td>EXIO2</td><td>Backlight enable</td><td>เปิดหลังจอ init เสร็จ (ไม่ให้เห็นภาพขยะตอนเริ่ม)</td></tr>
+<tr><td>EXIO3</td><td>LCD_RST (active low)</td><td>high</td></tr>
+<tr><td>EXIO4</td><td>SD_CS (active low)</td><td>high ตอนเริ่ม แล้ว driver ดึง low ค้างหลังส่ง clock ปลุกการ์ด</td></tr>
+<tr><td>EXIO5</td><td>USB_SEL (0 = USB, 1 = CAN)</td><td>0</td></tr>
+<tr><td>EXIO6</td><td>LCD_VDD_EN (ตาม schematic)</td><td>ไม่ได้ใช้ในโค้ด</td></tr>
+</table>
+
+<h2 id="init">ลำดับการเริ่มต้นใน <code>setup()</code></h2>
+<ol>
+  <li><code>devlink.begin(921600)</code>: dev link บน UART0 พร้อมรับคำสั่งตั้งแต่แรก</li>
+  <li>I2C → CH422G (<code>LCD_RST | SD_CS</code> = high) → GT911 (reset ผ่าน EXIO1)</li>
+  <li><code>sd.begin()</code>: เตรียม SPI2 ก่อนจอ เพราะ GDMA แบบ memory-to-memory (fill และ blitter) ต้องยืม trigger id ของ peripheral ที่ว่าง และ SPI2 ต้องได้ของตัวเองก่อน</li>
+  <li><code>lcd.begin(16 MHz)</code> → <code>dma.begin()</code> → <code>dma.setScanOut(&amp;lcd)</code> (blitter รู้จังหวะของ scan-out)</li>
+  <li>Paint helper task (core 0, stack 9 KB), touch queue + touch task (task <code>probe</code> ถูกสร้างเมื่อสั่ง <code>probe</code> ครั้งแรก)</li>
+  <li>เปิด backlight → <code>plat.begin()</code> (Preferences "iotdash", fetch worker "http" ที่ stack อยู่ใน PSRAM, ต่อ callback ของ <code>radio::begin</code>)</li>
+  <li>สร้าง engine task 48 KB บน core 1 แล้วลบ Arduino loop task ทิ้งเพื่อคืน stack</li>
+</ol>
+<p>firmware ไม่ต่อ Wi-Fi เองแล้ว: OS เปิด radio หลังโหลด registry (<code>Os::netStart</code>) ตาม <code>wifi.enabled</code> และเครือข่ายที่บันทึกไว้ ส่วน Bluetooth เปิดเมื่อมีคนใช้ ดู <a href="connectivity.html">Wi-Fi และ Bluetooth</a></p>
+
+<h2 id="partitions">Partition table (16 MB)</h2>
+<table>
+<tr><th>Name</th><th>Type / subtype</th><th>Offset</th><th>Size</th><th>ใช้ทำอะไร</th></tr>
+<tr><td><code>nvs</code></td><td>data / nvs</td><td>0x9000</td><td>20 KB</td><td>Preferences "iotdash" (<code>storage</code>; ssid/pass ที่ firmware รุ่นก่อนเขียนไว้ไม่ถูกอ่านแล้ว)</td></tr>
+<tr><td><code>otadata</code></td><td>data / ota</td><td>0xE000</td><td>8 KB</td><td>ของ bootloader</td></tr>
+<tr><td><code>app0</code></td><td>app / ota_0</td><td>0x10000</td><td>3.94 MB</td><td>firmware (engine, QuickJS, driver, boot image ที่ฝังไว้)</td></tr>
+<tr><td><code>sys</code></td><td>data / 0x40</td><td>0x400000</td><td>2.25 MB</td><td>system image ที่คัดลอกจาก <code>/system/os.idb</code></td></tr>
+<tr><td><code>slots</code></td><td>data / 0x41</td><td>0x640000</td><td>4.5 MB</td><td>app image 3 slot × 1.5 MB</td></tr>
+<tr><td><code>reg</code></td><td>data / nvs</td><td>0xAC0000</td><td>64 KB</td><td>Registry ของ OS (namespace "registry", key "json") รวมเครือข่าย Wi-Fi ที่บันทึกและอุปกรณ์ BLE ที่จำไว้</td></tr>
+<tr><td><code>fs</code></td><td>data / spiffs</td><td>0xAD0000</td><td>5.2 MB</td><td>LittleFS ที่ <code>/flash</code> ใช้แทน SD card</td></tr>
+</table>
+<div class="note"><p>ก่อนหน้านี้มี partition <code>bundle</code> สำหรับ app แบบเดียว (สมัยยังไม่มี OS) layout ปัจจุบันเปลี่ยนเพื่อให้มี <code>fs</code> ไว้ใช้แทนการ์ด การเปลี่ยน partition table ต้อง flash firmware ใหม่ทั้งชุด (<code>iotdash.py flash</code>) แล้ว deploy OS ใหม่ เพราะ offset ของทุกอย่างเลื่อน</p></div>
+
+<h2 id="sdkconfig">ค่า build และ sdkconfig</h2>
+<p>ใช้ pioarduino (Arduino บน ESP-IDF 5) แบบ hybrid compile เพื่อให้ตั้ง sdkconfig เองได้</p>
+<table>
+<tr><th>ค่า</th><th>เหตุผล</th></tr>
+<tr><td><code>CONFIG_LCD_RGB_ISR_IRAM_SAFE=y</code></td><td>interrupt ของ panel อยู่ใน IRAM ทำงานได้แม้ cache ถูกปิดระหว่างเขียน flash</td></tr>
+<tr><td><code>'# CONFIG_LCD_RGB_RESTART_IN_VSYNC is not set'</code></td><td>ปิด restart ทุก vsync เพราะ driver ไม่ reset ตัวนับ bounce buffer ทำให้ EOF ที่หลงมาเติม buffer ผิด ภาพทั้งเฟรมเลื่อน 16 แถว (รายละเอียดใน <a href="display.html#restart-bug">การแสดงผล</a>) ต้องใส่ quote เพราะใน ini เครื่องหมาย <code>#</code> ที่ไม่มี quote คือ comment และการลบบรรทัดทิ้งไม่พอ เพราะค่า default ของ Arduino คือ <code>=y</code></td></tr>
+<tr><td><code>CONFIG_ESP32S3_DATA_CACHE_32KB</code>, <code>LINE_64B</code></td><td>line 64 B ให้ throughput ของ PSRAM สูงขึ้น; ขนาดลดจาก 64 KB เป็น 32 KB ตอนเพิ่ม radio (cache ของ S3 ใช้ SRAM ภายใน) comment ด้านบนของ <code>custom_sdkconfig</code> ใน <code>platformio.ini</code> ยังเขียนว่า 64 KB</td></tr>
+<tr><td><code>CONFIG_ESP32S3_INSTRUCTION_CACHE_32KB</code></td><td>ลด cache miss ของโค้ด</td></tr>
+<tr><td><code>CONFIG_SPIRAM_XIP_FROM_PSRAM=y</code></td><td>โค้ดและ rodata รันจาก PSRAM ดังนั้นการเขียน flash (คัดลอก image, localStorage) ไม่ปิด cache ใต้ interrupt ของ scan-out และการรันโค้ดไม่ไปแย่ง flash</td></tr>
+<tr><td><code>CONFIG_COMPILER_OPTIMIZATION_PERF</code>, <code>-O2</code> (ตัด <code>-Os</code>)</td><td>ความเร็วของ layout/paint/JS</td></tr>
+<tr><td><code>CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=0</code></td><td><code>malloc()</code> ทั่วไปเลือก PSRAM ทุกขนาด: การจองเล็กๆ ของ engine เคยกิน SRAM ภายในที่ WiFi, Bluetooth และ stack ต้องใช้ (พวกนั้นขอ internal ด้วย capability เอง)</td></tr>
+<tr><td><code>'# CONFIG_ESP_WIFI_STATIC_TX_BUFFER is not set'</code>, <code>CONFIG_ESP_WIFI_DYNAMIC_TX_BUFFER=y</code>, <code>CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=4</code>, <code>CONFIG_ESP_WIFI_RX_BA_WIN=8</code></td><td>WiFi: TX buffer จองต่อ packet (จาก PSRAM) แทน static 8 ตัวใน SRAM; RX static 4 ตัว (block-ack window ได้สองเท่า)</td></tr>
+<tr><td><code>'# CONFIG_BT_NIMBLE_MEM_ALLOC_MODE_INTERNAL is not set'</code>, <code>CONFIG_BT_NIMBLE_MEM_ALLOC_MODE_EXTERNAL=y</code></td><td>NimBLE host จองจาก PSRAM (ใช้ <code>BT_CTRL_RUN_IN_FLASH_ONLY</code> ไม่ได้: controller library ของ S3 ไม่มี build แบบนั้น)</td></tr>
+<tr><td><code>CONFIG_BT_NIMBLE_MAX_CONNECTIONS=2</code>, <code>CONFIG_BT_CTRL_BLE_MAX_ACT=3</code>, <code>CONFIG_BT_CTRL_SCAN_DUPL_CACHE_SIZE=20</code>, <code>…ADV_REPORT_FLOW_CTRL_NUM=30</code>, <code>…ADV_REPORT_DISCARD_THRSHOLD=10</code>, ปิด mesh scan duplicate และ BLE 5.0 feature, transport ACL 8 / EVT 12 / discard 4, host task stack 4096</td><td>central ขนาดเล็ก: scan + สูงสุด 2 link (หน่วยความจำของ controller อยู่ใน SRAM ภายใน)</td></tr>
+<tr><td><code>'# CONFIG_MBEDTLS_INTERNAL_MEM_ALLOC is not set'</code>, <code>CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC=y</code></td><td>buffer ของ TLS (~40 KB ต่อ connection) อยู่ใน PSRAM: ใน SRAM ภายในวางคู่กับ radio ไม่พอ (<code>mbedtls_ssl_setup: -0x7F00</code>)</td></tr>
+<tr><td><code>-DARDUINO_USB_CDC_ON_BOOT=0</code></td><td>Serial คือ UART0 (ชิป USB-serial) ไม่ใช่ USB CDC ของ S3</td></tr>
+<tr><td><code>board_build.embed_files = os/build/boot.idb</code></td><td>boot screen ฝังใน firmware: ต้อง <code>os build</code> ก่อน build firmware</td></tr>
+</table>
+
+<h2 id="usb">พอร์ต USB และ dev link</h2>
+<ul>
+  <li>ใช้พอร์ต USB ที่ต่อกับชิป USB-serial (ที่ macOS เห็นเป็น <code>/dev/cu.usbmodem5B901262921</code>) ความเร็ว 921600 baud</li>
+  <li>การเปิดพอร์ตจะ reset บอร์ด (DTR/RTS) เครื่องมือจึงรอให้บอร์ดตอบ PING ก่อนส่งงาน</li>
+  <li>buffer รับของ UART เหลือ 6 KB (SRAM ภายใน) เครื่องมือส่ง frame ละไม่เกิน 4 KB แล้วรอคำตอบ; frame ที่ขาดกลางทางถูกทิ้งเมื่อสายเงียบ 500 ms</li>
+  <li>ถ้า upload ขึ้น "No serial data received" ให้ลองใหม่ หรือกด BOOT ค้างแล้วกด RESET เพื่อเข้า download mode</li>
+  <li>เปิดพอร์ตได้ทีละโปรแกรม ถ้า <code>device log</code> หรือ <code>device probe</code> ค้างอยู่ คำสั่งอื่นจะใช้พอร์ตไม่ได้ (ต้อง Ctrl-C ก่อน)</li>
+</ul>
+
+<h2 id="probe">Probe วัดแรงดัน (Sensor AD)</h2>
+<p>เพิ่มไว้ตอนตรวจช่อง SD: task <code>probe</code> (core 0, priority 1) อ่าน GPIO6 ด้วย ADC (attenuation 11 dB, อ่านได้ถึง ~3.1 V) ประมาณ 10 บรรทัดต่อวินาที และรายงาน avg/min/max ในช่วง 100 ms พร้อมสถานะ <code>HIGH</code>/<code>LOW</code>/<code>TOGGLING</code> และสถานะสาย SD</p>
+<pre><code>probe GPIO6: 3105 mV  min 3098  max 3112  HIGH     | cs low sck 1 mosi z miso z</code></pre>
+<ul>
+  <li>ต่อสายจาก J8 ขา 3 ไปแตะจุดที่จะวัด (GND ร่วมกันอยู่แล้ว)</li>
+  <li><b>ห้ามแตะจุด 5 V</b> (VBUS, แบตเตอรี่) ขา ADC ทนไม่ถึง 5 V</li>
+  <li>คำสั่ง: <code>iotdash.py device probe [cs0|cs1|sck0|sck1|sckz|mosi0|…]</code> ดู <a href="../reference/devlink.html#text-commands">คำสั่งบนบอร์ด</a></li>
+</ul>
+
+<h2 id="sd-fault">ช่อง SD card ของบอร์ดที่ใช้ทดสอบเสีย</h2>
+<div class="bad"><p><b>สรุป:</b> ช่องเสียบ SD ของบอร์ด Rev 1.2 ตัวที่ใช้พัฒนาอ่านการ์ดไม่ได้ (<code>sdmmc_card_init failed (0x107)</code> = timeout) ไม่ใช่ปัญหาของโค้ด ระบบจึงใช้ flash ภายในแทนการ์ดไปก่อน</p></div>
+<table>
+<tr><th>สิ่งที่ตรวจ</th><th>ผล</th></tr>
+<tr><td>การ์ด (Kingston 4 GB, FAT32)</td><td>อ่านเขียนในคอมพิวเตอร์ได้ปกติ</td></tr>
+<tr><td>CS ผ่าน CH422G</td><td>ลำดับคำสั่งตรงกับ demo ของ Waveshare (ESP-IDF เขียน <code>0x38 ← 0x0A</code>, ของเรา <code>0x0E</code> ต่างแค่ backlight) และอ่านกลับจากชิปได้ <code>1e</code>/<code>0e</code> ตามที่สั่ง</td></tr>
+<tr><td>VDD (ขา 4), GND (ขา 6) ในช่อง</td><td>~3100 mV / ~0</td></tr>
+<tr><td>CS (ขา 2)</td><td>เปลี่ยนตาม <code>cs0</code>/<code>cs1</code></td></tr>
+<tr><td>SCK (ขา 5), MOSI (ขา 3)</td><td>ขึ้น <code>TOGGLING</code> เต็ม 3.1 V ทุกครั้งที่ driver ลอง init การ์ด</td></tr>
+<tr><td>MISO (ขา 7)</td><td>~3160 mV (pull-up) และเมื่อแตะสาย error ของบอร์ดเปลี่ยนเป็น <code>0x108</code> แปลว่าขาต่อถึง GPIO13 จริง</td></tr>
+<tr><td>Firmware ทางการ <code>SD_Test.bin</code> ของ Waveshare</td><td>ล้มเหลวแบบเดียวกัน (<code>ESP_ERR_TIMEOUT</code>)</td></tr>
+<tr><td>กดการ์ดค้าง, ตรวจทิศการ์ด</td><td>ไม่ช่วย</td></tr>
+</table>
+<p>สัญญาณจากบอร์ดถึงขาสปริงในช่องครบทุกเส้น ที่เหลือคือหน้าสัมผัสระหว่างสปริงกับการ์ดตอนเสียบจริง ซึ่งวัดและแก้ด้วยโค้ดไม่ได้ ทางเลือก: ส่งเคลมพร้อมผล <code>SD_Test.bin</code> และผลวัดข้างต้น, ลองแปะเทปบางหลังการ์ด, หรือใช้โมดูล SD ภายนอก ระหว่างนี้ OS ทำงานบน LittleFS (<code>storage</code> = auto จะ fallback เอง)</p>
+</main>
+</body>
+</html>

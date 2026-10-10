@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="/system/theme.css">
+<link rel="stylesheet" href="../../lib/calc.css">
+<style>
+  .list { flex: 1; margin: 0 20px 18px; padding: 4px 0; border-radius: 18px; background: var(--surface); box-shadow: var(--shadow); overflow-y: auto; }
+  .item { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; padding: 12px 20px; border-bottom: 1px solid var(--line); }
+  .item:last-child { border-bottom: 0; }
+  .calc { font-size: 20px; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .when { font-size: 14px; color: var(--muted); flex: none; }
+  .empty { padding: 40px; text-align: center; color: var(--muted); }
+  .stats { font-size: 14px; color: var(--muted); }
+</style>
+</head>
+<body>
+<div class="top">
+  <div class="chip icon" id="back">‹</div>
+  <h1>History</h1>
+  <span class="stats" id="stats"></span>
+  <div class="chip" id="clear">Clear</div>
+</div>
+<div class="list" id="list"></div>
+<script src="../../lib/calc.js"></script>
+<script src="main.js"></script>
+</body>
+</html>

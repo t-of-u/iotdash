@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>JavaScript runtime — iotdash docs</title>
+<link rel="stylesheet" href="../assets/docs.css">
+<script src="../assets/nav.js" defer></script>
+</head>
+<body>
+<nav id="sidebar"></nav>
+<main>
+<div class="crumb">แกนระบบ (core)</div>
+<h1>JavaScript runtime</h1>
+<p class="lead">QuickJS ที่ถูกห่อด้วย <code>JsHost</code> (<code>lib/rt/js.h/.cpp</code>): runtime ต่อ app session, context ต่อหน้า, scope ของ timer/process, งบเวลาต่อ tick, watchdog ที่หยุด script ที่ค้าง, event bus ของ OS และ storage
+นี่คือ layer 4 (app process) ในสถาปัตยกรรม: แอปช้าได้เฉพาะตัวเอง ห้ามลากการแสดงผลหรือ input ไปด้วย</p>
+<div id="toc"></div>
+
+<h2 id="realms">Runtime, context และ realm</h2>
+<table>
+<tr><th>ระดับ</th><th>อายุ</th><th>มีอะไร</th></tr>
+<tr><td><b>Runtime</b> (<code>JSRuntime</code>)</td><td>หนึ่ง app session: สร้างเมื่อหน้าแรกของแอปเปิด, ทำลายใน <code>endSession()</code> เมื่อออกจากแอป</td><td>heap ของ JS ทั้งหมด, background process แบบ APP, event bus, ไฟล์ที่เปิดอยู่</td></tr>
+<tr><td><b>Context</b> (<code>JSContext</code>, realm)</td><td>หนึ่งหน้า: สร้างใน <code>reset(doc)</code> และปล่อยใน <code>retirePage()</code> เมื่อเปลี่ยนหน้า</td><td>global ใหม่ทั้งหมด: Web API จาก bootstrap, <code>os.js</code>, script ของหน้า, wrapper ของ DOM node</td></tr>
+</table>
+<p>ทุกหน้าเริ่มต้นสะอาด: ตัวแปร global ของหน้าก่อนไม่ตามมา โค้ดของหน้าก่อนหยุด แต่ realm เก่าจะถูก GC คืนก็ต่อเมื่อไม่มีอะไรอ้างถึงแล้ว ถ้า background process แบบ APP ที่สร้างในหน้าแรกยังถือ closure ไว้ realm ของหน้าแรกจะยังอยู่ (~400 KB ในกรณี Calculator)</p>
+<p>stack สูงสุดของ JS 32 KB (เดิม 24 KB: event ที่ซ้อนกัน เช่น keydown → <code>click()</code> → handler → <code>blur()</code> → listener ของ blur ลึกราว 16 frame ผ่าน dispatch ของ bootstrap) task <code>engine</code> จึงมี stack 48 KB ใน SRAM ภายใน ปรับขนาดได้ด้วย environment variable <code>RT_JS_STACK</code> (หน่วย KB) build ที่มี sanitizer มี frame ใหญ่กว่าต้องตั้งเอง เช่น <code>RT_JS_STACK=256</code></p>
+
+<h3 id="nosource">ไม่เก็บ source ของ function</h3>
+<p>QuickJS ปกติเก็บข้อความ source ของทุก function ไว้ให้ <code>Function.prototype.toString</code> และ function ที่ซ้อนอยู่ข้างในก็อยู่ในสำเนาของ function แม่อีกชั้น script ของหน้าจึงอยู่ในหน่วยความจำสองถึงสามรอบ iotdash ปิดสิ่งนี้ (<code>QJS_KEEP_FUNCTION_SOURCE</code> ค่าเริ่มต้น 0 ใน <code>lib/quickjs/quickjs.c</code>) <code>toString()</code> ของ function จึงได้รูป <code>function name() { [native code] }</code> (ขึ้นบรรทัดใหม่รอบ <code>[native code]</code>)</p>
+<div class="ok"><p>ประหยัด ≈130 KB ต่อการเริ่มหน้า (bootstrap + <code>os.js</code>) และ ≈160 KB สำหรับ script ของ แอปตาชั่ง</p></div>
+
+<h3>ลำดับเมื่อเปิดหน้า</h3>
+<ol>
+  <li><code>retirePage()</code>: ทิ้ง scope ของหน้าเก่า (timer, rAF, fetch, process PAGE, listener), unpin wrapper ทั้งหมด, <code>JS_FreeContext</code>, <code>JS_RunGC</code></li>
+  <li>สร้าง runtime ถ้ายังไม่มี, สร้าง context ใหม่, ใส่ native function ไว้ที่ <code>__n</code></li>
+  <li>รัน bootstrap (Web API) ซึ่งเอา <code>__n</code> ออกจาก global ทันที (หน้าเห็นแค่ API สาธารณะ)</li>
+  <li>รัน <code>os.js</code> (API ของ OS) แล้วรัน script ของหน้า</li>
+</ol>
+
+<h2 id="scopes">Scope: APP กับ PAGE</h2>
+<p>timer, animation frame, fetch, background process และ OS event listener จำ scope ที่สร้างมันไว้ (ไฟล์ที่เปิดค้างไว้ถูกปิดเมื่อจบ session เท่านั้น) สิ่งที่ถูกสร้างจากใน callback จะได้ scope เดียวกับ callback นั้น</p>
+<table>
+<tr><th>Scope</th><th>ถูกทิ้งเมื่อ</th><th>ใช้กับ</th></tr>
+<tr><td>PAGE (<code>pageGen_</code>)</td><td>ออกจากหน้า</td><td>ค่าเริ่มต้นของ setTimeout/setInterval/rAF/fetch และ process ที่ระบุ "PAGE"</td></tr>
+<tr><td>APP (<code>kScopeApp</code> = 0)</td><td>ออกจากแอป (<code>endSession</code>)</td><td>process ที่ระบุ "APP" และทุกอย่างที่มันสร้าง</td></tr>
+</table>
+
+<h2 id="processes">Background process</h2>
+<pre><code>setBackgroundProcess('poll', 'APP', async (info) =&gt; {
+  const r = await fetch('https://example.com/api');
+  …
+  return 5000;          <span class="c">// รอบถัดไปอีก 5 วินาที; false = หยุด; ไม่คืนค่า = ใช้ interval</span>
+}, 1000);
+rmBackgroundProcess('poll');
+clearBackgroundProcess('PAGE');   <span class="c">// 'ALL' | 'APP' | 'PAGE'</span>
+os.processes();                   <span class="c">// รายการ process</span></code></pre>
+<ul>
+  <li>รันครั้งแรกทันที แล้วทุก <code>intervalMs</code> (ค่าเริ่มต้น 1000) <code>info</code> = <code>{name, runs}</code></li>
+  <li>คืน number = delay ครั้งถัดไป, <code>false</code> = หยุด, หรือ promise ของค่าเหล่านั้น (รอบถัดไปนับจากตอน promise settle) process ที่ยังไม่ settle จะไม่ถูกรันซ้อน</li>
+  <li>throw ปกติ: ถูก log แล้วรันรอบถัดไปตาม interval</li>
+  <li>ถูก watchdog หยุด: process นั้นถูก<b>ปิดถาวร</b> (log "process X ended: it did not return") เพราะรอบถัดไปจะค้างแบบเดิม</li>
+  <li>ชื่อซ้ำ = แทนที่ตัวเดิม</li>
+</ul>
+
+<h2 id="budget">งบเวลาและ watchdog</h2>
+<div class="facts">
+  <div class="fact"><div class="v">10 ms</div><div class="k">งบของ timer + process ต่อ tick (<code>kTickBudgetUs</code>)</div></div>
+  <div class="fact"><div class="v">3 วินาที</div><div class="k">script เดียวรันได้นานสุด (<code>kScriptWatchdogMs</code>)</div></div>
+</div>
+<h3>งบต่อ tick</h3>
+<p><code>JsHost::tick()</code> ตั้ง <code>budgetEndUs_</code> = ตอนนี้ + 10 ms แล้วรัน timer ที่ถึงเวลาตามลำดับ deadline จากนั้น process ระหว่างทางถ้าเกินงบจะหยุด ที่เหลือยังค้างอยู่และรันใน tick ถัดไป ผลคือแอปที่มีงานเยอะทำให้ตัวเองช้า แต่เฟรมยังถูกวาดและ touch ยังถูกส่งทุก tick (งบเป็นการตรวจระหว่าง callback ไม่ได้ตัด callback ที่รันอยู่) timer ที่ถูกเพิ่มระหว่างรันจะรอ tick ถัดไป และรันไม่เกิน 256 ตัวต่อ tick</p>
+<h3>Watchdog</h3>
+<ul>
+  <li>engine ตั้ง deadline ก่อนทุก tick และก่อนส่ง pointer event (<code>armWatchdog(3000)</code>)</li>
+  <li>QuickJS เรียก <code>onInterrupt</code> เป็นระยะ ถ้าเลย deadline จะคืน 1 → script ถูกยกเลิกด้วย exception ที่แอป catch ไม่ได้ และ log "app script stopped: it ran for more than 3000 ms without returning"</li>
+  <li>ใช้นาฬิกาจริง (<code>steady_clock</code>) ไม่ใช่นาฬิกาของ platform เพราะใน simulator นาฬิกาเสมือนหยุดเดินขณะ script วน loop</li>
+  <li><code>setInterval</code> ที่ callback ค้างจะถูก clear ทิ้ง ("setInterval N cleared: its callback did not return")</li>
+  <li>จำนวนครั้งที่หยุดดูได้จาก <code>watchdogStops()</code></li>
+</ul>
+<div class="ok"><p>ทดสอบบนบอร์ด: <code>while(true){}</code> ถูกตัดที่ 3.0 วินาที แอปใช้งานต่อได้ จอและ touch ไม่ค้าง</p></div>
+
+<h2 id="dom">DOM wrapper</h2>
+<p>JS เห็น DOM node ผ่าน wrapper ที่ถือ reference ของ node ไว้ wrapper ของ node ที่ต่ออยู่ใน document ถูก <b>pin</b> ไว้ ทำให้ property ที่เพิ่มเอง (expando) และ listener อยู่รอด node ที่ถูกถอดออกยังอยู่ตราบที่ JS ถือ wrapper ไว้ event ถูกส่งผ่าน <code>__dispatch</code> เฉพาะชนิดที่มี listener ลงทะเบียนไว้ (<code>listened_</code>) จึงไม่เสียเวลาข้าม JS กับ event ที่ไม่มีใครฟัง</p>
+
+<h3 id="gc">GC หลังเปลี่ยนจอ</h3>
+<p>แอปที่สร้างจอใหม่ด้วย <code>innerHTML</code> ทิ้ง subtree เดิมทุกครั้ง wrapper ของ node ที่ถูกถอดมักติดอยู่ใน cycle (listener ที่อ้างถึง element ของตัวเอง) ซึ่งมีแต่ GC ที่คืนได้ และระหว่างนั้น node ยังถือข้อมูล layout/paint ที่ QuickJS ไม่ได้นับ GC ของ QuickJS จึงไม่รู้ว่าควรทำงาน (เคยทำให้ PSRAM ลด ≈5 KB ทุกรอบที่วนจอของ แอปตาชั่ง)</p>
+<p><code>JsHost::nodeConnected</code> นับ node ใน subtree ที่ถูกถอดซึ่งมี wrapper อยู่ <code>JsHost::tick</code> เรียก <code>JS_RunGC</code> เมื่อ:</p>
+<ul>
+  <li>นับได้ตั้งแต่ 150 node (ประมาณหนึ่งจอ)</li>
+  <li>ไม่มีการถอด node มา 600 ms แล้ว (หน้านิ่ง ไม่ทำกลาง transition)</li>
+  <li>ห่างจาก GC ครั้งก่อนอย่างน้อย 2 วินาที</li>
+</ul>
+<p>GC หนึ่งครั้งใช้ ≈35 ms บนบอร์ด element ที่ถูกถอดยังทิ้ง computed style ทันทีโดยไม่ต้องรอ GC (ดู <a href="memory-storage.html#diet">หน่วยความจำ</a>)</p>
+
+<h2 id="fetch">fetch</h2>
+<table>
+<tr><th>URL</th><th>อ่านจาก</th><th>หมายเหตุ</th></tr>
+<tr><td>relative (เช่น <code>data.json</code>)</td><td>bundle ของแอป (resolve จาก URL ของหน้า)</td><td>404 ถ้าไม่มีหรืออยู่ใต้ <code>system/private/</code>; resolve แบบ async เหมือน fetch จริง; อ่านผ่าน ImageSource (paced)</td></tr>
+<tr><td><code>http://</code>, <code>https://</code></td><td>task <code>http</code> บน core 0 (queue 8 งาน)</td><td>ต้องต่อ Wi-Fi ("WiFi not connected"); option <code>timeout</code> ค่าเริ่มต้น 15 วินาที; "too many requests" ถ้าคิวเต็ม</td></tr>
+</table>
+<h3>fetch ภายนอกบนบอร์ด</h3>
+<ul>
+  <li>task <code>http</code> มี stack 10 KB ใน PSRAM (SRAM ภายในเก็บไว้ให้ radio) ใช้ <code>esp_http_client</code> กับ certificate bundle ของ ESP-IDF สำหรับ HTTPS; buffer ของ TLS อยู่ใน PSRAM</li>
+  <li>ใช้คำสั่งแบบ stream (<code>open</code> → <code>write</code> body → <code>fetch_headers</code> → <code>read</code>) แทน <code>esp_http_client_perform</code>: คำตอบ 4xx/5xx ถึงหน้าพร้อม body ตามปกติ (เดิม 401 ที่ไม่มี auth challenge กลายเป็น error <code>ESP_ERR_NOT_SUPPORTED</code> แอปจึงแยก "รหัสผิด" ไม่ได้)</li>
+  <li>ตาม redirect ไม่เกิน 5 ครั้ง: 301/302/303 ที่ไม่ใช่ GET/HEAD ไปต่อเป็น GET (ไม่มี body และ <code>Content-Type</code>), 307/308 คง method เดิม <code>response.url</code> เป็น URL สุดท้าย</li>
+  <li>body ของคำตอบเก็บไม่เกิน 1 MB และต้องมีที่ใน PSRAM: buffer จองครั้งเดียวจาก <code>Content-Length</code> (ถ้ามี) ต้องมี block ต่อเนื่องพอบวก 64 KB และ PSRAM รวมพอสำหรับ string ของ script อีกเท่าตัว ไม่พอ fetch ล้มด้วย <code>ESP_ERR_NO_MEM</code> (log <code>http: no memory for the answer of URL</code>) แทนที่บอร์ดจะ reset; คำตอบถูก move ไปถึงหน้าโดยไม่ copy (เดิม copy 2 รอบ คำตอบ 174 KB ของ server จริงทำให้ <code>operator new</code> จองไม่ได้และ abort); <code>statusText</code> มีเฉพาะ 200 ("OK"); error ของการเชื่อมต่อได้ชื่อ error ของ ESP-IDF</li>
+  <li>ใน simulator fetch ภายนอกใช้ <code>curl</code></li>
+</ul>
+
+<h2 id="bus">OS event bus</h2>
+<p><code>os.on(name, fn)</code> คืนฟังก์ชันสำหรับยกเลิก, <code>os.emit(name, data)</code> ส่งข้อมูลเป็น JSON event ถูกส่งใน tick ถัดไป (ไม่ใช่ทันที) listener ผูกกับ scope ที่สร้าง</p>
+<table>
+<tr><th>Event</th><th>ส่งโดย</th><th>ข้อมูล</th></tr>
+<tr><td><code>registry</code></td><td>OS เมื่อ registry เปลี่ยน</td><td><code>{key, value}</code> (clear: <code>{key: null, value: null}</code>)</td></tr>
+<tr><td><code>apps</code></td><td>OS เมื่อแอปถูกติดตั้ง/ลบจากคอมพิวเตอร์</td><td><code>{id}</code></td></tr>
+<tr><td><code>net</code></td><td>OS เมื่อสถานะ Wi-Fi, อินเทอร์เน็ต หรือ power ของ Bluetooth เปลี่ยน</td><td><code>{wifi, internet, bt}</code></td></tr>
+<tr><td><code>bt</code></td><td>radio ของ Bluetooth</td><td><code>{type: 'notify' | 'disconnected' | 'found' | 'state', …}</code> (ดู <a href="../reference/js-api.html#bt-events">JS API</a>)</td></tr>
+<tr><td><code>#confirm&lt;n&gt;</code></td><td>ภายใน: คำตอบของ <code>os.confirm()</code></td><td><code>true</code>/<code>false</code></td></tr>
+<tr><td><code>#net&lt;n&gt;</code></td><td>ภายใน: คำตอบของคำขอ <code>os.wifi</code>/<code>os.bt</code>/<code>os.net</code> (ช่องใช้ครั้งเดียว)</td><td><code>{err, v}</code></td></tr>
+<tr><td>ชื่ออื่นใดๆ</td><td>แอป (ใช้สื่อสารระหว่าง process กับหน้า)</td><td>อะไรก็ได้ที่เป็น JSON</td></tr>
+</table>
+
+<h2 id="storage">Storage</h2>
+<table>
+<tr><th>API</th><th>เก็บที่</th><th>ใช้ร่วมกัน</th><th>อายุ</th></tr>
+<tr><td><code>localStorage</code></td><td><code>memory.json</code> ของแอป ผ่าน <code>Os::memSet</code> (flush หลัง 500 ms)</td><td>ทุกหน้าของแอปเดียวกัน</td><td>ถาวรจนลบแอปหรือ format</td></tr>
+<tr><td><code>sessionStorage</code></td><td>Map ใน context ของหน้า</td><td>ไม่ใช้ร่วม</td><td>หายเมื่อเปลี่ยนหน้า</td></tr>
+<tr><td><code>open()</code>, <code>fs.*</code></td><td><code>data/</code> ของแอป</td><td>ทุกหน้า</td><td>ถาวร</td></tr>
+<tr><td><code>registry</code></td><td>NVS ภายใน</td><td>ทั้งระบบ (อ่านอย่างเดียวสำหรับแอปทั่วไป)</td><td>ถาวรจน factory reset</td></tr>
+</table>
+<p>ทั้ง <code>localStorage</code> และ <code>sessionStorage</code> เป็น Proxy: ใช้ได้ทั้ง <code>getItem/setItem</code> และ <code>localStorage.key = …</code> ค่าถูกแปลงเป็น string เสมอ</p>
+<div class="note"><p>ข้อเสนอที่ยังไม่ได้ทำ: ให้ <code>sessionStorage</code> ใช้ร่วมกันระหว่างทุกหน้าของแอปและล้างเมื่อกลับ home (ค่าบนจอของแอปจะไม่ค้างหลังปิด แต่ยังอยู่ระหว่างเปลี่ยนหน้า) ดู <a href="../project/known-issues.html">ข้อจำกัดและงานที่ค้าง</a></p></div>
+
+<h2 id="modules">Script และ module</h2>
+<ul>
+  <li><code>&lt;script src&gt;</code> และ inline script รันตามลำดับในเอกสาร; <code>type="module"</code> ใช้ module loader ที่ resolve path จาก bundle</li>
+  <li>error ที่ไม่ถูก catch ถูกพิมพ์ใน log ของบอร์ด (และ simulator) พร้อม stack</li>
+  <li><code>console.log</code> ไปที่ log เดียวกัน ดูได้ด้วย <code>iotdash.py device log</code></li>
+</ul>
+</main>
+</body>
+</html>

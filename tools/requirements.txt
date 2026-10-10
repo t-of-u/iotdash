@@ -1,0 +1,8 @@
+# tools/iotdash.py and tools/osbuild.py (then: tools/.venv/bin/playwright install chromium)
+fonttools==4.66.1
+freetype-py==2.5.1
+numpy==2.5.3
+pillow==12.3.0
+playwright==1.63.0
+pyserial==3.5
+uharfbuzz==0.56.3

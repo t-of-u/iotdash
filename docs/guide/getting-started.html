@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ติดตั้งและใช้งานครั้งแรก — iotdash docs</title>
+<link rel="stylesheet" href="../assets/docs.css">
+<script src="../assets/nav.js" defer></script>
+</head>
+<body>
+<nav id="sidebar"></nav>
+<main>
+<div class="crumb">เริ่มต้น</div>
+<h1>ติดตั้งและใช้งานครั้งแรก</h1>
+<p class="lead">iotdash เป็น SDK แบบเดียวกับ Flutter: ติดตั้งครั้งเดียว ใส่ <code>bin/</code> ไว้ใน PATH แล้วสร้างแอปเป็นโปรเจกต์ที่ไหนก็ได้ หน้านี้ไล่ตั้งแต่เตรียมเครื่อง, firmware, วางระบบลงบอร์ด, แอปแรก จนถึงวิธีทำงานประจำวัน</p>
+<div id="toc"></div>
+
+<h2>สิ่งที่ต้องมี</h2>
+<div class="table-wrap"><table>
+  <tr><th>สิ่งที่ต้องมี</th><th>ใช้ทำอะไร</th><th>หมายเหตุ</th></tr>
+  <tr><td>PlatformIO (pioarduino)</td><td>build และ flash firmware</td><td>เรียกผ่าน <code>~/.platformio/penv/bin/pio</code> ใช้ Arduino core 3.x บน ESP-IDF 5.5 (compile framework ใหม่ตาม <code>custom_sdkconfig</code>)</td></tr>
+  <tr><td>Python venv <code>tools/.venv</code></td><td>compiler ของแอป/OS, dev link, เครื่องมือทั้งหมด</td><td>ต้องมี <code>freetype-py</code>, <code>uharfbuzz</code>, <code>pillow</code>, <code>numpy</code>, <code>playwright</code>, <code>pyserial</code>, <code>fonttools</code> (ดู <code>tools/requirements.txt</code>)</td></tr>
+  <tr><td>Chromium ของ Playwright</td><td>วัดว่าหน้าเว็บใช้ฟอนต์ขนาด/น้ำหนักไหน, ตัดคำภาษาไทย, render icon, ภาพอ้างอิง</td><td>ติดตั้งด้วย <code>tools/.venv/bin/playwright install chromium</code></td></tr>
+  <tr><td>CMake + zlib (SDL2 ไม่บังคับ)</td><td>build simulator</td><td>ไม่มี SDL2 ก็ใช้แบบ headless (<code>--shot</code>, <code>--script</code>) ได้</td></tr>
+</table></div>
+<pre><code><span class="c"># ครั้งแรก: เครื่องมือ Python + Chromium, ภาพระบบ, simulator แล้วตรวจทั้งหมด</span>
+cd iotdash
+scripts/setup.sh                 <span class="c"># --web: build สำหรับเบราว์เซอร์ด้วย, --firmware: firmware ด้วย</span>
+echo 'export PATH="$PATH:'$PWD'/bin"' &gt;&gt; ~/.zshrc   <span class="c"># แล้วเปิด terminal ใหม่</span>
+iotdash doctor                   <span class="c"># ✓ ครบ = พร้อม</span></code></pre>
+<div class="note"><p><code>bin/iotdash</code> ใช้ Python ใน <code>tools/.venv</code> ของ SDK เสมอ (สร้างให้เองครั้งแรก) จึงไม่ต้องสนใจ Python ของระบบหรือของ PlatformIO <code>iotdash --version</code> บอกว่า SDK อยู่ที่ไหน</p></div>
+
+<h2>ต่อสายบอร์ด</h2>
+<ol>
+  <li>ใช้ช่อง USB-C ที่พิมพ์ว่า <b>UART</b> ชิป CH343 จะขึ้นเป็น <code>/dev/cu.usbmodem5B901262921</code> ชื่อนี้ตั้งไว้ใน <code>platformio.ini</code> (<code>upload_port</code>) และ <code>tools/iotdash.py</code> (<code>PORT</code>) ถ้าเครื่องคุณขึ้นชื่ออื่นให้แก้สองที่นี้</li>
+  <li>สวิตช์ UART_SEL (SW1) บนบอร์ดต้องอยู่ฝั่ง USB/UART ถ้าเลื่อนไปฝั่ง header UART ภายนอก ช่อง USB จะต่อกับ ESP ไม่ได้</li>
+  <li>ความเร็ว serial คือ 921600 baud ทั้ง flash และ dev link</li>
+</ol>
+<div class="note"><p><b>การเปิด serial port จะ reset บอร์ด</b> (สาย DTR/RTS ต่อกับ EN/IO0) ทุกคำสั่งของ <code>iotdash</code> ที่คุยกับบอร์ดจะรอให้บอร์ดตอบ PING ก่อนทำงาน ถ้าจะทดสอบหลายขั้นตอนต่อเนื่อง ให้เขียนเป็นสคริปต์ที่เปิด <code>Link</code> ครั้งเดียว ดู <a href="../tools/debugging.html">การ debug</a></p></div>
+
+<h2>Build และ flash firmware</h2>
+<p>firmware ฝังภาพหน้าจอ boot (<code>os/build/boot.idb</code>) ไว้ข้างใน (<code>board_build.embed_files</code>) จึงต้อง build OS อย่างน้อยหนึ่งครั้งก่อน build firmware ครั้งแรก</p>
+<pre><code>iotdash os build                 <span class="c"># สร้าง os/build/boot.idb และภาพระบบ</span>
+iotdash firmware upload          <span class="c"># build + flash (PlatformIO)</span></code></pre>
+<ul>
+  <li><b>build ครั้งแรกใช้เวลาหลายนาที:</b> pioarduino compile Arduino core และ ESP-IDF ใหม่ตาม <code>custom_sdkconfig</code> ราว 6 นาที รอบต่อ ๆ ไปประมาณ 1 นาที</li>
+  <li><b>ถ้าแก้ <code>custom_sdkconfig</code>:</b> framework จะถูก build ใหม่ทั้งหมด ส่วนการปิดค่าที่ Arduino เปิดไว้เป็นค่าเริ่มต้น ต้องเขียนในเครื่องหมายคำพูด เช่น <code>'# CONFIG_LCD_RGB_RESTART_IN_VSYNC is not set'</code> ไม่อย่างนั้น ini จะถือเป็น comment</li>
+  <li><b>ถ้า upload ขึ้น <code>Failed to connect ... No serial data received</code>:</b> กด BOOT ค้าง กด RESET หนึ่งครั้ง ปล่อย BOOT แล้ว upload ใหม่ ถ้าขึ้น <code>port is busy</code> แปลว่ามีโปรแกรมอื่นเปิด port อยู่ เช่นคำสั่ง <code>device log</code> หรือ <code>pio device monitor</code></li>
+  <li><b>การ flash firmware ไม่ลบข้อมูล:</b> pio เขียนแค่ bootloader, partition table และ app ส่วน file system (<code>fs</code>), ภาพระบบใน <code>sys</code>/<code>slots</code> และ registry ยังอยู่</li>
+</ul>
+
+<h2 id="secrets">ใส่ Wi-Fi ให้ระบบ (ก่อน build OS)</h2>
+<p>ถ้าอยากให้บอร์ดต่อ Wi-Fi ได้เองตั้งแต่ boot แรก ให้สร้างไฟล์ <code>os/core/private/secrets.json</code> <b>ก่อน</b> build ภาพระบบ ไฟล์นี้อยู่ใน <code>.gitignore</code> จึงไม่ถูก commit</p>
+<pre><code>mkdir -p os/core/private
+cat &gt; os/core/private/secrets.json &lt;&lt;'EOF'
+{"wifi": [{"ssid": "MyOffice", "pass": "office-password"}]}
+EOF</code></pre>
+<ul>
+  <li><code>os build</code> / <code>os deploy --build</code> ใส่ไฟล์ไว้ใน system image (หน้าเว็บและแอปอ่านไม่ได้) เมื่อระบบเริ่ม OS รวมเครือข่ายเหล่านี้เข้ากับที่บันทึกไว้ (เฉพาะเมื่อไฟล์เปลี่ยน) เปิด Wi-Fi แล้วต่อเครือข่ายที่อยู่ในระยะเอง</li>
+  <li>ใส่ได้หลายเครือข่าย ตัวแรกได้ลำดับก่อน แก้ไฟล์แล้ว deploy ใหม่ (<code>os deploy --build</code>) เพื่อเปลี่ยน</li>
+  <li>ไม่ใส่ไฟล์ก็ได้: เลือกเครือข่ายบนจอที่ Settings → Connection → Wi-Fi หรือสั่งจากคอมพิวเตอร์ <code>iotdash device wifi "SSID:PASS"</code></li>
+  <li>บอร์ดได้เวลาจริงจาก NTP หลังต่อครั้งแรก รายละเอียดอยู่ที่ <a href="../core/connectivity.html">Wi-Fi และ Bluetooth</a></li>
+</ul>
+
+<h2>วางระบบ (OS) ลง storage</h2>
+<p>เปิดบอร์ดครั้งแรกจะเห็นหน้าจอ boot ตามสถานะของ storage:</p>
+<div class="table-wrap"><table>
+  <tr><th>ข้อความบนจอ boot</th><th>ความหมาย</th><th>ทำอย่างไร</th></tr>
+  <tr><td>Insert an SD card</td><td>ไม่มี SD และไม่มี flash file system (กรณีปกติจะไม่เจอแล้ว เพราะบอร์ดสลับไปใช้ flash เอง)</td><td>ใส่การ์ด หรือตรวจ partition <code>fs</code></td></tr>
+  <tr><td>The SD card has no file system</td><td>อ่านการ์ดได้แต่ไม่มี FAT</td><td>กดปุ่ม Format บนจอ หรือ <code>os format --to device</code></td></tr>
+  <tr><td>The system is not installed on this card</td><td>storage ไม่มี <code>/system/os.json</code></td><td><code>os deploy --to device</code></td></tr>
+  <tr><td>Loading the system</td><td>กำลังคัดลอกภาพระบบลง flash slot (เฉพาะตอนภาพเปลี่ยน)</td><td>รอ แถบความคืบหน้าจะวิ่ง</td></tr>
+  <tr><td>The system image is damaged</td><td>อ่าน <code>/system/os.idb</code> ไม่ได้หรือ format ผิด</td><td>deploy ใหม่</td></tr>
+</table></div>
+<pre><code><span class="c"># build ภาพระบบจาก os/core แล้วส่งลงบอร์ด (ประมาณ 22 วินาทีสำหรับ 1.7 MB)</span>
+iotdash os deploy --build --to device</code></pre>
+<p>หลังส่งเสร็จ เครื่องมือจะสั่ง <code>OS_RELOAD</code> บอร์ดจะ boot ระบบใหม่ คัดลอกภาพลง flash slot แล้วเข้าหน้า home ซึ่งจะมีแอป Settings ติดมากับระบบ ถ้ามี <code>secrets.json</code> บอร์ดจะต่อ Wi-Fi นั้นภายในไม่กี่วินาที (ดูได้ที่ Settings → Connection)</p>
+
+<h2 id="first-app">แอปแรก</h2>
+<p>แอปคือโฟลเดอร์ที่ไหนก็ได้ (<code>app.json</code> + <code>main.html</code> + ไฟล์อื่นที่หน้าใช้) คำสั่งทำงานกับโฟลเดอร์ปัจจุบัน</p>
+<pre><code>cd ~/projects
+iotdash create hello-board       <span class="c"># โปรเจกต์ใหม่จาก template (app.json, icon.svg, main.html/css/js, README)</span>
+cd hello-board
+iotdash run                      <span class="c"># build, ลงการ์ดของ simulator แล้วเปิดแอปในหน้าต่าง</span>
+iotdash run --device             <span class="c"># ลงบอร์ดผ่าน USB แล้วเปิดแอป</span>
+iotdash run --web                <span class="c"># ในเบราว์เซอร์ (WebAssembly, ต้องมี web/dist: scripts/setup.sh --web)</span>
+iotdash shot                     <span class="c"># simulator เทียบกับ Chromium: build/compare.png</span>
+iotdash pack                     <span class="c"># build/hello-board-1.0.idbz สำหรับ store</span>
+iotdash uninstall --to device    <span class="c"># ลบแอปพร้อม data/ และ memory.json</span></code></pre>
+<p>แอปที่ติดตั้งจะขึ้น icon ที่หน้า home ทันทีโดยไม่ต้อง reboot (เครื่องมือส่ง <code>APPS_CHANGED</code>) ถ้าแอปนั้นเปิดค้างอยู่ระหว่างติดตั้งใหม่หรือถอนออก ระบบจะปิดแอปแล้วกลับหน้า home ตัวอย่างที่มากับ SDK ใช้ชื่อแทนโฟลเดอร์ได้: <code>iotdash run calculator</code> (<code>examples/</code>)</p>
+
+<h2>ใช้ simulator</h2>
+<p>simulator คือ engine และ OS ชุดเดียวกับบนบอร์ด build สำหรับ Mac ใช้การ์ดจำลองที่โฟลเดอร์ <code>os/build/sdcard</code> ของ SDK (ทุกโปรเจกต์ใช้การ์ดนี้ร่วมกัน เหมือน emulator ตัวเดียว)</p>
+<pre><code>iotdash run                                    <span class="c"># แอปของโฟลเดอร์นี้</span>
+iotdash os sim                                 <span class="c"># เปิด OS เฉย ๆ (หน้าต่างถ้ามี SDL2)</span>
+iotdash os sim --script "wait 1500; launch calculator; wait 800; shot /tmp/c.png"
+iotdash apps                                   <span class="c"># แอปบนการ์ดของ simulator (--to device: บนบอร์ด)</span></code></pre>
+<p>คำสั่งใน script และตัวเลือกตรวจสอบต่าง ๆ อยู่ในหน้า <a href="../tools/simulator.html">Simulator</a></p>
+
+<h2>วิธีทำงานประจำวัน</h2>
+<div class="table-wrap"><table>
+  <tr><th>แก้อะไร</th><th>ทำอะไรต่อ</th></tr>
+  <tr><td>แอป (โฟลเดอร์ของแอป ที่ไหนก็ได้)</td><td><code>iotdash run</code> หรือ <code>iotdash run --device</code> (ข้อมูล <code>data/</code> และ <code>memory.json</code> ของแอปยังอยู่)</td></tr>
+  <tr><td>ระบบใน <code>os/core</code> (home, settings, shell, theme, <code>os.js</code>)</td><td><code>iotdash os deploy --build --to device</code></td></tr>
+  <tr><td>หน้าจอ boot (<code>os/core/boot</code>)</td><td><code>os build</code> แล้ว flash firmware ใหม่ เพราะ boot image ฝังอยู่ใน firmware</td></tr>
+  <tr><td>engine (<code>lib/rt</code>) หรือ firmware (<code>src/</code>)</td><td><code>iotdash firmware upload</code> แล้วทดสอบใน simulator ด้วย (โค้ดชุดเดียวกัน)</td></tr>
+  <tr><td>ต้องการเช็กว่าหน้าเว็บวาดถูกตาม HTML ไหม</td><td><code>iotdash shot</code> (แอป) หรือ <code>iotdash os ref --page ... -o ref.png</code> (ระบบ) แล้วเทียบกับ <code>iotdash device shot</code></td></tr>
+</table></div>
+
+<h2>ปัญหาที่พบบ่อย</h2>
+<ul>
+  <li><b><code>board did not answer</code>:</b> บอร์ดไม่ตอบ PING ภายใน 12 วินาที ตรวจสาย, port และสวิตช์ UART_SEL</li>
+  <li><b>ภาพบนจอกระตุกหรือแตก:</b> ดูตัวเลข <code>tears</code> ในคำสั่ง <code>device stats</code> ต้องเป็น 0 ถ้าไม่ใช่ ดูวิธีไล่ใน <a href="../tools/debugging.html">การ debug</a></li>
+  <li><b>แอปกดแล้วตอบช้า:</b> ดูเวลา style/layout/paint และจำนวน element ที่ถูกคำนวณ style ใหม่ใน stats และอ่านข้อแนะนำใน <a href="app-development.html">การเขียนแอป</a></li>
+  <li><b>หน่วยความจำ:</b> stats บอก <code>psram</code> ที่เหลือ ควรเหลือมากกว่า ~300 KB ตลอดเวลา</li>
+  <li><b>ต่อ Wi-Fi ไม่ได้:</b> Settings → Connection บอกสาเหตุ (wrong password, network not found, timed out) บอร์ดใช้ได้เฉพาะ 2.4 GHz; "Connected, no internet" = ต่อ router ได้แต่ตรวจ <code>generate_204</code> ไม่ผ่าน</li>
+  <li><b>Wi-Fi หรือ Bluetooth ไม่ยอมเปิด ("not enough memory"):</b> SRAM ภายในไม่พอ ดูด้วยคำสั่ง text <code>heap</code> (<a href="../core/connectivity.html#memory">รายละเอียด</a>)</li>
+</ul>
+</main>
+</body>
+</html>

@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Format ไฟล์และ layout — iotdash docs</title>
+<link rel="stylesheet" href="../assets/docs.css">
+<script src="../assets/nav.js" defer></script>
+</head>
+<body>
+<nav id="sidebar"></nav>
+<main>
+<div class="crumb">อ้างอิง</div>
+<h1>Format ไฟล์และ layout</h1>
+<p class="lead">format แบบ binary ทั้งหมดที่เครื่องมือสร้างและบอร์ดอ่าน: image ของแอป/ระบบ (IDB1), แพ็กเกจแอปของ store (IDBZ), font atlas (FNT1), รูป (IMG1), header ของ flash slot (ISL1) และไฟล์ JSON บน storage ทุกตัวเลขเป็น little-endian</p>
+<div id="toc"></div>
+
+<h2 id="idb1">IDB1: image ของแอปและระบบ</h2>
+<p>archive แบบแบน ไฟล์ <code>os.idb</code>, <code>app.idb</code>, <code>boot.idb</code> สร้างโดย <code>pack_bundle()</code> (<code>tools/iotdash.py</code>) อ่านโดย <code>Bundle</code> (<code>lib/rt/bundle.cpp</code>)</p>
+<pre><code>"IDB1"            4 byte
+count             u32
+count × entry:    pathLen:u16  path[pathLen] (utf-8)  offset:u32  size:u32
+padding           ให้ data แรกเริ่มที่ขอบ 4 byte
+data              แต่ละไฟล์เริ่มที่ขอบ 4 byte (เรียงตามชื่อ)</code></pre>
+<ul>
+  <li>offset นับจากต้น archive</li>
+  <li>บอร์ดอ่าน index ผ่าน <code>ImageSource::read()</code> แล้วเก็บเป็น <code>ImageSlice</code> ต่อไฟล์ (ไม่ map)</li>
+  <li>ถูก mount ที่ prefix: <code>boot/</code>, <code>system/</code>, <code>app/</code> ไฟล์ <code>main.html</code> ในแอปจึงเป็น <code>app/main.html</code></li>
+</ul>
+<h3>ไฟล์ที่ build ใส่ให้</h3>
+<table>
+<tr><th>Path</th><th>เนื้อหา</th></tr>
+<tr><td><code>manifest.json</code></td><td><code>{"entry": "main.html", "fonts": [{"file", "family", "weight", "size"}, …], "aliases": {...}, "built": unix}</code></td></tr>
+<tr><td><code>fonts/&lt;Family&gt;-&lt;weight&gt;-&lt;size&gt;.fnt</code></td><td>atlas FNT1 (ขนาดทศนิยมใช้ <code>_</code> เช่น <code>Inter-400-15_5.fnt</code>)</td></tr>
+<tr><td><code>thai.dict</code></td><td>คำไทยบรรทัดละคำ (จาก segmenter ของ Chromium) ใช้ตัดบรรทัด</td></tr>
+<tr><td>รูปทุกไฟล์</td><td>แปลงเป็น IMG1 แต่ยังใช้ชื่อเดิม (เช่น <code>icon.svg</code> เป็น IMG1 ภายใน)</td></tr>
+<tr><td><code>assets/default-icon.img</code>, <code>apps/&lt;id&gt;/icon.img</code></td><td>(system image) icon ขนาด 92 px</td></tr>
+</table>
+
+<h2 id="idbz">IDBZ: แพ็กเกจแอปของ store</h2>
+<p>ไฟล์ <code>.idbz</code> หนึ่งไฟล์คือแอปหนึ่งเวอร์ชัน (<code>app.json</code>, <code>icon.img</code>, <code>app.idb</code>) ต่อกัน<b>โดยไม่บีบอัด</b> บอร์ดเขียนแต่ละไฟล์ลงการ์ดได้ทันทีระหว่างดาวน์โหลด ไม่ต้องแตกไฟล์และไม่ต้องมี RAM เท่าแพ็กเกจ สร้างโดย <code>tools/idbz.py</code> (<code>iotdash pack</code>) อ่านโดย <code>IdbzWriter</code> (<code>lib/rt/os_store.cpp</code>), backend ของ iotstore และ <code>parseIdbz</code> ใน <code>web/iotdash-web.js</code></p>
+<pre><code>header 64 byte:   "IDBZ"  format:u16 (=1)  count:u16  manifestOffset:u32  manifestSize:u32
+                  totalSize:u32  manifestSha256[32]  reserved[12]
+count × entry 64: name[24] (utf-8, ปิดด้วย 0, ≤ 23 ตัว: A–Z a–z 0–9 . _ -)  offset:u32  size:u32  sha256[32]
+manifest:         JSON {id, title, version, description, os: {built, min}, built}
+files:            เรียงตาม offset แต่ละไฟล์เริ่มที่ขอบ 16 byte</code></pre>
+<ul>
+  <li>ต้องมี <code>app.json</code>, <code>icon.img</code>, <code>app.idb</code> ครบ; <code>manifest.id</code> = ชื่อโฟลเดอร์บนการ์ด</li>
+  <li>ตอนติดตั้ง ทุกไฟล์ถูกเขียนลง <code>/applications/.store-&lt;id&gt;/</code> พร้อมคำนวณ SHA-256 ถ้าตรงครบจึงย้ายแทนไฟล์ของแอป (<code>app.idb</code> ย้ายเป็นไฟล์สุดท้าย) <code>memory.json</code> และ <code>data/</code> อยู่เหมือนเดิม</li>
+  <li><code>python3 tools/idbz.py FILE</code> แสดง manifest, ไฟล์ และตรวจ checksum</li>
+</ul>
+
+<h2 id="fnt1">FNT1: font atlas</h2>
+<p>glyph ที่ rasterize แล้ว (A8, gamma 0.72) ของหนึ่ง (family, weight, size) สร้างโดย <code>build_atlas()</code> อ่านโดย <code>FontFace</code> (<code>lib/rt/font.h</code>)</p>
+<h3>Header (112 byte)</h3>
+<table>
+<tr><th>Field</th><th>Type</th><th>ความหมาย</th></tr>
+<tr><td><code>magic</code></td><td>char[4]</td><td><code>"FNT1"</code></td></tr>
+<tr><td><code>version</code>, <code>flags</code></td><td>u16, u16</td><td>1, 0</td></tr>
+<tr><td><code>size, ascent, descent, lineGap, xHeight, capHeight, underlinePos, underlineThick</code></td><td>f32 × 8</td><td>metric ของ face หลัก (px)</td></tr>
+<tr><td><code>fbAscent, fbDescent</code></td><td>f32 × 2</td><td>metric ของ fallback (ไทย) ที่รวมไว้</td></tr>
+<tr><td><code>glyphCount, kernCount, thaiCount</code></td><td>u32 × 3</td><td>จำนวนแถวของแต่ละตาราง</td></tr>
+<tr><td><code>glyphOff, kernOff, thaiOff, bitmapOff</code></td><td>u32 × 4</td><td>offset ของตาราง/บล็อก bitmap</td></tr>
+<tr><td><code>weight</code></td><td>u16</td><td>100–900</td></tr>
+<tr><td><code>italic</code>, <code>reserved</code></td><td>u8, u8</td><td></td></tr>
+<tr><td><code>family</code></td><td>char[32]</td><td>ชื่อ family</td></tr>
+</table>
+<h3>ตาราง</h3>
+<table>
+<tr><th>ตาราง</th><th>ขนาดแถว</th><th>Field</th></tr>
+<tr><td>Glyph (เรียงตาม cp)</td><td>20 byte</td><td><code>cp:u32</code> (≥ 0x110000 = variant ตามบริบท), <code>adv64:i16</code> (1/64 px), <code>bx, by:i16</code> (ซ้าย/บนเทียบ pen กับ baseline), <code>w, h:u16</code>, <code>flags:u16</code> (1 fallback, 2 mark, 4 color), <code>off:u32</code> (ในบล็อก bitmap)</td></tr>
+<tr><td>Kerning (เรียงตาม pair)</td><td>8 byte</td><td><code>pair:u32</code> = <code>(a &lt;&lt; 16) | b</code> (BMP เท่านั้น), <code>adj64:i16</code>, pad</td></tr>
+<tr><td>Thai placement</td><td>12 byte</td><td><code>base:u16</code>, <code>mark:u16</code> (+ bit บริบท: 0x8000 วรรณยุกต์บนสระบน, 0x4000 ตามด้วยสระอำ, 0xFFFF = base variant เช่น ญ ฐ ไม่มีหาง), <code>glyph:u32</code> (0 = ตัว mark เอง), <code>dx64, dy64:i16</code> (y ขึ้น)</td></tr>
+<tr><td>Bitmap</td><td>–</td><td>A8 ต่อ glyph เรียงตามลำดับ glyph (ขนาดของ glyph i = <code>off[i+1] − off[i]</code>) บอร์ดคัดลอกทีละ glyph เข้า PSRAM</td></tr>
+</table>
+<p>ถ้า base ที่ต้องการไม่มีในตาราง Thai จะใช้แถวของ ก (U+0E01) แทน; ASCII และช่วงไทย U+0E00–0E7F มีตาราง index ตรง ตัวอื่นใช้ binary search</p>
+
+<h2 id="img1">IMG1: รูป</h2>
+<pre><code>"IMG1"  w:u16  h:u16  format:u16  reserved:u16      (12 byte)
+format 0: RGB565[w*h]                   ทึบ
+format 1: RGB565[w*h] แล้วตามด้วย A8[w*h]   มี alpha
+format 2: A8[w*h]                        mask (SVG ขาวดำ: เปลี่ยนสีด้วย CSS ได้)</code></pre>
+<p>สีถูก dither แบบ ordered 4×4 (Bayer) ก่อนตัดเป็น 565 เพื่อลดแถบสีใน gradient รูปถูกย่อตอน build ให้ด้านยาวไม่เกิน 2 เท่าของขนาดใหญ่สุดที่หน้าแสดงใน Chromium</p>
+
+<h2 id="isl1">ISL1: header ของ flash slot</h2>
+<p>partition <code>sys</code> (slot เดียว) และ <code>slots</code> (3 × 1.5 MB) แต่ละ slot เริ่มด้วย sector header 4 KB แล้วตามด้วย image</p>
+<table>
+<tr><th>Field</th><th>Type</th><th>ความหมาย</th></tr>
+<tr><td><code>magic</code></td><td>char[4]</td><td><code>"ISL1"</code></td></tr>
+<tr><td><code>size</code></td><td>u32</td><td>ขนาด image</td></tr>
+<tr><td><code>stamp</code></td><td>u32</td><td>ลำดับการคัดลอก (slot ที่ stamp น้อยสุดถูกใช้ซ้ำก่อน)</td></tr>
+<tr><td><code>key</code></td><td>char[48]</td><td><code>"system"</code> หรือ <code>"app:&lt;id&gt;"</code></td></tr>
+<tr><td><code>hash</code></td><td>char[24]</td><td>hash จาก <code>os.json</code>/<code>app.json</code> (sha1 16 ตัวแรกของ image)</td></tr>
+</table>
+<p>ลำดับการเขียน: ลบ header ก่อน → เขียน image ทีละ 64 KB → เขียน header สุดท้าย การคัดลอกที่ไม่จบจึงไม่มี magic และถูกคัดลอกใหม่ครั้งหน้า</p>
+
+<h2 id="json">ไฟล์ JSON บน storage</h2>
+<table>
+<tr><th>ไฟล์</th><th>ตัวอย่าง</th><th>ใครเขียน</th></tr>
+<tr><td><code>/system/os.json</code></td><td><code>{"version": "0.1.0", "hash": "3f2a…", "size": 1747000, "built": 1760000000}</code></td><td><code>os build</code>; factory reset เขียน version + hash</td></tr>
+<tr><td><code>/applications/&lt;id&gt;/app.json</code></td><td><code>{"title": "Calculator", "version": "1.0", "id": "calculator", "hash": "…", "size": 884623, "built": …}</code></td><td><code>app build</code> (รวม <code>app.json</code> ของต้นฉบับ)</td></tr>
+<tr><td><code>/applications/&lt;id&gt;/install.json</code></td><td><code>{"source": "store", "version": "1.1", "version_id": "1791…", "store": "http://…", "installed": 1791640832}</code></td><td>OS ตอนติดตั้งจาก store; <code>iotdash install</code> เขียน <code>{"source": "usb", "version", "installed"}</code> (ไม่มีไฟล์ = คัดลอกเอง แอป Apps แสดงเป็น "Card")</td></tr>
+<tr><td><code>memory.json</code></td><td><code>{"expr": "12+3", "ans": "15", "count": "7"}</code></td><td>OS (<code>localStorage</code>) ค่าเป็น string ทั้งหมด</td></tr>
+<tr><td>Registry (NVS ไม่ใช่ไฟล์)</td><td><code>{"darkMode": true, "clock24": false, "wifi.enabled": true, "bt.devices": [{"id": "c8:2e:…", "name": "BLE-Scale-01", "type": 0}], "secure.wifi": [{"ssid": "…", "pass": "…"}]}</code></td><td>system app, OS (เครือข่าย/อุปกรณ์ที่ต่อสำเร็จ)</td></tr>
+<tr><td><code>os/core/private/secrets.json</code> (ต้นฉบับ, ไม่อยู่ใน git) → <code>system/private/secrets.json</code> ใน <code>os.idb</code></td><td><code>{"wifi": [{"ssid": "…", "pass": "…"}]}</code></td><td>ผู้พัฒนา ก่อน <code>os build</code> (<a href="../core/connectivity.html#secrets">รายละเอียด</a>)</td></tr>
+</table>
+
+<h2 id="card">Layout ของ storage</h2>
+<pre><code>/system/os.idb  os.json  memory.json  data/  assets/default-icon.img
+/applications/&lt;id&gt;/app.json  app.idb  icon.img  install.json  memory.json  data/
+/system/data/store/catalog.json  icons/&lt;id&gt;-&lt;version_id&gt;.img     (แอป Apps)</code></pre>
+<p>รายละเอียดดู <a href="../core/memory-storage.html#layout">หน่วยความจำและ storage</a></p>
+
+<h2 id="build-tree">โฟลเดอร์ build บนคอมพิวเตอร์</h2>
+<pre><code>os/build/
+  boot.idb                 <span class="c">boot screen (ฝังใน firmware ผ่าน embed_files)</span>
+  system-fonts.json        <span class="c">"Inter|400|16.0": "ตัวอักษรทั้งหมดใน atlas" ใช้ตัด atlas ที่ซ้ำออกจากแอป</span>
+  card/                    <span class="c">staging: สิ่งที่ควรอยู่บน storage</span>
+    system/…
+    applications/&lt;id&gt;/…
+  sdcard/                  <span class="c">card ของ simulator (--to sim)</span>
+  tmp/                     <span class="c">icon ที่แปลงแล้ว</span>
+.build-cache/*.fnt         <span class="c">cache ของ atlas ตาม hash ของ (family, size, charset, gamma)</span></code></pre>
+
+<h2 id="partitions">Partition table</h2>
+<pre><code># Name,   Type, SubType, Offset,   Size
+nvs,      data, nvs,     0x9000,   0x5000
+otadata,  data, ota,     0xe000,   0x2000
+app0,     app,  ota_0,   0x10000,  0x3F0000
+sys,      data, 0x40,    0x400000, 0x240000
+slots,    data, 0x41,    0x640000, 0x480000
+reg,      data, nvs,     0xAC0000, 0x10000
+fs,       data, spiffs,  0xAD0000, 0x530000</code></pre>
+<p>คำอธิบายแต่ละ partition ดู <a href="../core/hardware.html#partitions">ฮาร์ดแวร์และ flash</a></p>
+</main>
+</body>
+</html>

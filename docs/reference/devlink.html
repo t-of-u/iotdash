@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dev link — iotdash docs</title>
+<link rel="stylesheet" href="../assets/docs.css">
+<script src="../assets/nav.js" defer></script>
+</head>
+<body>
+<nav id="sidebar"></nav>
+<main>
+<div class="crumb">อ้างอิง</div>
+<h1>Dev link และคำสั่งบนบอร์ด</h1>
+<p class="lead">ช่องทางเดียวระหว่างคอมพิวเตอร์กับบอร์ด: UART0 ผ่านชิป USB-serial ที่ 921600 baud มีทั้ง frame แบบ binary (ติดตั้งแอป, ถ่ายจอ, eval) และบรรทัดข้อความ (log และคำสั่ง debug) ปนกันในสายเดียว
+โค้ด: <code>src/devlink.h/.cpp</code>, <code>onLink()</code> ใน <code>src/main.cpp</code>, class <code>Link</code> ใน <code>tools/iotdash.py</code></p>
+<div id="toc"></div>
+
+<h2 id="frame">Frame</h2>
+<pre><code>0xA5 0x5A  type:u8  len:u32le  payload[len]  crc32(payload):u32le</code></pre>
+<ul>
+  <li>บอร์ดอ่านด้วย state machine (MAGIC1 → MAGIC2 → TYPE → LEN → PAYLOAD → CRC) frame ที่ CRC ผิดถูกทิ้ง</li>
+  <li>byte ที่ไม่ได้อยู่ใน frame และเป็น ASCII ที่พิมพ์ได้ ถูกสะสมเป็นบรรทัด เมื่อเจอ <code>\n</code> จะส่งเป็นคำสั่ง text (<code>R_TEXT</code>) สูงสุด 256 ตัวอักษร</li>
+  <li>ทางบอร์ด → คอมพิวเตอร์: frame ตอบกลับ + บรรทัด log ธรรมดา (<code>devlink.log()</code> thread-safe ด้วย TX lock)</li>
+  <li>log ของ ESP-IDF (<code>ESP_LOGx</code>) ถูก redirect ผ่าน <code>esp_log_set_vprintf</code> เข้า <code>devlink.log</code> ไม่ให้แทรกกลาง frame (เคยทำให้ภาพหน้าจอเสีย) log จาก task ที่ถือ TX lock อยู่จะถูกทิ้ง (กัน deadlock)</li>
+  <li>frame ขนาดใหญ่ (ภาพหน้าจอ) ส่งแบบ stream: <code>begin(type, len)</code> → <code>write()</code> หลายครั้ง → <code>end()</code> โดยคำนวณ CRC ระหว่างทาง ไม่ต้องมี buffer ทั้งก้อน</li>
+</ul>
+<div class="warn"><p>การเปิดพอร์ตจะ reset บอร์ด (สาย DTR/RTS) ทุกคำสั่งของ <code>iotdash.py</code> จึงรอ PING ก่อน และงานหลายขั้นควรทำใน connection เดียว</p></div>
+
+<h2 id="types">ชนิดของ frame</h2>
+<h3>คอมพิวเตอร์ → บอร์ด</h3>
+<table>
+<tr><th>Type</th><th>ชื่อ</th><th>Payload</th><th>ผล / ตอบ</th></tr>
+<tr><td>1–3</td><td>FILE, BUNDLE, COMMIT</td><td>–</td><td>ACK false: "single bundles are gone: install apps (…)" (ของยุคก่อน OS)</td></tr>
+<tr><td>4</td><td>EVAL</td><td>JS (utf-8)</td><td>ACK พร้อมผลเป็น string</td></tr>
+<tr><td>5</td><td>SHOT</td><td>ว่าง หรือ <code>"s"</code></td><td>R_SHOT ของ page ล่าสุด; <code>"s"</code> = page ที่ scan-out กำลังอ่านอยู่ และ log ว่าเป็นหน้าล่าสุดหรือไม่</td></tr>
+<tr><td>6</td><td>STATS</td><td>–</td><td>ACK พร้อมบรรทัด stats</td></tr>
+<tr><td>7</td><td>PING</td><td>–</td><td>ACK <code>"iotdash OS 0.1.0 800x480 card flash|mounted|none"</code></td></tr>
+<tr><td>8</td><td>OPEN</td><td>app id</td><td>launch แอป, ACK พร้อม error ถ้ามี</td></tr>
+<tr><td>9</td><td>WIFI</td><td><code>ssid \0 pass</code></td><td>ส่งต่อให้ <code>Os::net("wifi.connect")</code> ในฐานะ system: ต่อทันที บันทึกลง registry เมื่อต่อได้ ACK "connecting (saved once it is up)" หรือ error ("the system is not up" ถ้า OS ยังไม่เริ่ม)</td></tr>
+<tr><td>10</td><td>RESET</td><td>–</td><td><code>esp_restart()</code> (ไม่ตอบ)</td></tr>
+<tr><td>11</td><td>TOUCH</td><td><code>phase:u8 x:u16 y:u16</code> (0 down, 1 move, 2 up)</td><td>ใส่ <code>touchQ</code> พร้อมเวลาปัจจุบัน (ไม่ตอบ)</td></tr>
+<tr><td>12</td><td>FS_WRITE</td><td><code>flags:u8</code> (1 first, 2 last) <code>pathLen:u16 path offset:u32 data</code></td><td>first = เปิดไฟล์ใหม่ (สร้างโฟลเดอร์), last = ปิด ACK ต่อทุก chunk</td></tr>
+<tr><td>13</td><td>FS_DELETE</td><td>path บนการ์ด</td><td>ลบแบบ recursive</td></tr>
+<tr><td>14</td><td>FS_MKDIR</td><td>path</td><td><code>mkdir -p</code></td></tr>
+<tr><td>15</td><td>FS_LIST</td><td>path</td><td>ACK พร้อม JSON array ของชื่อ (ไม่รวมชื่อขึ้นต้นด้วยจุด)</td></tr>
+<tr><td>16</td><td>FS_FORMAT</td><td>–</td><td>format storage + สร้าง <code>/system/data</code>, <code>/applications</code></td></tr>
+<tr><td>17</td><td>OS_RELOAD</td><td>–</td><td>ACK "reloading" แล้ว <code>Os::reloadSystem()</code></td></tr>
+<tr><td>18</td><td>APPS_CHANGED</td><td>app id</td><td><code>Os::appsChanged(id)</code></td></tr>
+</table>
+<p>path ของ FS_* เป็น path บนการ์ด (<code>/system/…</code>, <code>/applications/…</code>) และปฏิเสธถ้ามี <code>..</code> หรือไม่มี storage ("no card")</p>
+<h3>บอร์ด → คอมพิวเตอร์</h3>
+<table>
+<tr><th>Type</th><th>ชื่อ</th><th>Payload</th></tr>
+<tr><td>0x81</td><td>R_ACK</td><td><code>type:u8 ok:u8 text</code></td></tr>
+<tr><td>0x82</td><td>R_SHOT</td><td><code>w:u16 h:u16</code> + RLE ของ RGB565: ชุดละ 3 byte <code>count:u8 pixel:u16le</code></td></tr>
+<tr><td>0x83</td><td>R_TEXT</td><td>ข้อความ utf-8</td></tr>
+</table>
+<p>ภาพหน้าจอถูกบีบแบบ RLE สองรอบ: รอบแรกนับขนาด (เพื่อส่ง <code>len</code> ใน header) รอบสองส่งจริงแบบ stream อ่านจาก page buffer หลัง invalidate cache</p>
+
+<h2 id="text-commands">คำสั่ง text</h2>
+<p>ส่งเป็นบรรทัดข้อความ (เช่น <code>printf 's\n' &gt; /dev/cu.usbmodem…</code> ไม่ได้เพราะจะ reset บอร์ด ให้ใช้ <code>tools/devcmd.py</code> หรือ <code>pio device monitor</code>)</p>
+<pre><code>~/.platformio/penv/bin/python tools/devcmd.py z sleep2 s     <span class="c"># reset stats, รอ 2 วินาที, พิมพ์ stats</span>
+tools/.venv/bin/python tools/devcmd.py ilog sleep10            <span class="c"># เปิด input log แล้วดู 10 วินาที</span></code></pre>
+<h3>ทั่วไป</h3>
+<table>
+<tr><th>คำสั่ง</th><th>ทำอะไร</th></tr>
+<tr><td><code>s</code></td><td>พิมพ์ stats (บอร์ดพิมพ์เองทุก 10 วินาทีเมื่อมีเฟรม)</td></tr>
+<tr><td><code>heap</code></td><td>SRAM ภายใน (ว่าง, block ใหญ่สุด, ต่ำสุดที่เคยลง), PSRAM (ว่าง, block ใหญ่สุด) และ stack ที่ไม่เคยถูกใช้ของ task engine/paint1/http/touch: <code>heap: internal free … KB largest … KB min … KB | psram free … KB largest … KB | stack unused: engine … B paint1 … B http … B touch … B</code></td></tr>
+<tr><td><code>z</code></td><td>reset ตัวนับของ scan-out (late, max fill, tears, …)</td></tr>
+<tr><td><code>r</code></td><td>reload หน้าปัจจุบัน</td></tr>
+<tr><td><code>ilog</code></td><td>สลับ log ของ input (<code>DBG_INPUT</code>) ดู <a href="../core/input.html#debug">Touch และ input</a></td></tr>
+<tr><td><code>storage flash</code> / <code>storage auto</code></td><td>เลือก storage ตอน boot ครั้งถัดไป</td></tr>
+</table>
+<h3>วัดประสิทธิภาพและการแสดงผล</h3>
+<table>
+<tr><th>คำสั่ง</th><th>ทำอะไร</th></tr>
+<tr><td><code>f</code></td><td>วาดใหม่ทั้งจอต่อเนื่อง 3 วินาที แล้วพิมพ์ stats (stress)</td></tr>
+<tr><td><code>P</code></td><td>profile 3 วินาทีของการวาดทั้งจอ: เวลาต่อ section, เวลาที่ paint helper ทำงาน/engine รอ</td></tr>
+<tr><td><code>M</code></td><td>micro-benchmark ของ raster primitive บน band ใน SRAM</td></tr>
+<tr><td><code>m</code></td><td>สลับการวาดสองคอร์</td></tr>
+<tr><td><code>d</code></td><td>สลับ fill DMA (ปิด = CPU memcpy)</td></tr>
+<tr><td><code>p</code></td><td>สลับ cache preload ของทาง CPU fill</td></tr>
+<tr><td><code>R&lt;MB/s&gt;</code></td><td>จำกัดอัตราเขียนของ blitter (<code>R0</code> = ไม่จำกัด, ค่าเริ่มต้น 40)</td></tr>
+<tr><td><code>F</code></td><td>bus stress: อ่าน flash (partition <code>sys</code> ที่ map ชั่วคราว) แบบกระโดด 2 วินาที แล้วรายงาน MB/s, dmafb, late</td></tr>
+<tr><td><code>Q</code></td><td>เหมือน <code>F</code> แต่อ่าน PSRAM (front page) ใช้เทียบ</td></tr>
+<tr><td><code>Tarm</code></td><td>เตรียม timeline: จะ "แช่แข็ง" event ring ที่ tear ครั้งถัดไป</td></tr>
+<tr><td><code>T</code></td><td>พิมพ์ timeline ที่แช่แข็ง: เวลาห่างจาก event ก่อน, VSYNC/fill, pos, busy, TEAR, phase</td></tr>
+</table>
+<h3>SD card และ probe (ฮาร์ดแวร์)</h3>
+<table>
+<tr><th>คำสั่ง</th><th>ทำอะไร</th></tr>
+<tr><td><code>sd</code></td><td>ส่ง CMD0 แบบดิบทั้งตอนไม่เลือกและเลือกการ์ด แล้วพิมพ์ byte ที่ได้ + ระดับ pull-up ของแต่ละสาย</td></tr>
+<tr><td><code>probe</code> / <code>probe on</code> / <code>probe off</code></td><td>stream แรงดันที่ GPIO6 (~10 บรรทัด/วินาที)</td></tr>
+<tr><td><code>cs0</code> / <code>cs1</code></td><td>ค้าง CS ของการ์ดไว้ที่ low/high (หยุดการลอง mount)</td></tr>
+<tr><td><code>sck0|sck1|sckz</code>, <code>mosi0|1|z</code>, <code>miso0|1|z</code></td><td>ขับสายนั้นเป็น 0/1 หรือปล่อยลอย (เห็น pull-up) ปล่อย SPI bus จนกว่าจะ <code>sdauto</code></td></tr>
+<tr><td><code>csauto</code> / <code>sdauto</code></td><td>คืนทุกสายเป็นปกติ และกลับมาลอง mount</td></tr>
+</table>
+
+<h2 id="stats">บรรทัด stats</h2>
+<p>ตัวอย่างรูปแบบ (ตัวเลขเป็นค่าประกอบ ขึ้นบรรทัดใหม่เพื่อให้อ่านง่าย ของจริงเป็นบรรทัดเดียว):</p>
+<pre><code>fps 38.9 | frame 31.2 ms (style 4.1 [4 el] layout 2.0 [part] paint 25.0) damage 51200 px |
+lcd 39.0 Hz late 0 fill avg 12 max 31 / 615 us dmafb 0 |
+sram 92 KB psram 1574 KB js 410 KB fonts-in-ram 180 KB |
+tears 0 | isr core 0 late max 40 us, &gt;200us 0, back-to-back 0, dma isr max 30 us</code></pre>
+<p>ความหมายของแต่ละช่องอยู่ใน <a href="../tools/debugging.html#stats">การวัดผลและ debug</a></p>
+</main>
+</body>
+</html>

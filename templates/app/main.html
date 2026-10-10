@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="/system/theme.css">
+<link rel="stylesheet" href="main.css">
+</head>
+<body>
+<div class="os-header">
+  <h1>{{title}}</h1>
+  <div class="grow"></div>
+  <div class="net" id="net"><span class="dot"></span><span id="netText">…</span></div>
+</div>
+<main class="content">
+  <section class="os-card counter">
+    <div class="label">Taps (kept in localStorage)</div>
+    <div class="value" id="count">0</div>
+    <div class="buttons">
+      <div class="btn" id="minus">−</div>
+      <div class="btn primary" id="plus">+</div>
+    </div>
+  </section>
+  <section class="os-card side">
+    <div class="row"><span class="k">App</span><span class="v" id="app"></span></div>
+    <div class="row"><span class="k">OS</span><span class="v" id="os"></span></div>
+    <div class="row"><span class="k">Time</span><span class="v" id="clock"></span></div>
+    <div class="btn wide" id="about">About this app</div>
+  </section>
+</main>
+<script src="main.js"></script>
+</body>
+</html>

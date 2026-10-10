@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>หน่วยความจำและ storage — iotdash docs</title>
+<link rel="stylesheet" href="../assets/docs.css">
+<script src="../assets/nav.js" defer></script>
+</head>
+<body>
+<nav id="sidebar"></nav>
+<main>
+<div class="crumb">แกนระบบ (core)</div>
+<h1>หน่วยความจำและ storage</h1>
+<p class="lead">SRAM, PSRAM และ flash ถูกใช้ทำอะไร, กฎ "ห้ามอ่าน flash ระหว่างแสดงผล" และกลไกที่ทำให้กฎนี้เป็นจริง (ImageSource, การคัดลอก font ทีละ glyph), cache ที่มีขอบเขต, งานลดหน่วยความจำต่อหน้า (รอบแอปตาชั่ง), SRAM ภายในที่ต้องเหลือให้ radio และ storage ของ OS (SD card หรือ LittleFS) พร้อม layout ของไฟล์</p>
+<div id="toc"></div>
+
+<h2 id="map">แผนที่หน่วยความจำ</h2>
+<table>
+<tr><th>หน่วยความจำ</th><th>ขนาด</th><th>ใช้ทำอะไร</th></tr>
+<tr><td>SRAM ภายใน</td><td>~512 KB (เหลือใช้ ~300 KB)</td><td>stack ของ task (engine 48 KB, paint1 9 KB, touch 3 KB, probe 3 KB เมื่อเปิดใช้), bounce buffer 2 × 19 KB, band ของ blitter 2 × 16 KB, buffer รับของ dev link 6 KB, data cache 32 KB, ISR และ DMA descriptor, ส่วนของ WiFi/BLE ที่ต้องเป็น internal (controller, RX buffer)</td></tr>
+<tr><td>PSRAM (octal)</td><td>8 MB</td><td>โค้ดและ rodata ของ firmware (XIP_FROM_PSRAM), page buffer 2 × 750 KB, DOM/style/layout, QuickJS heap, รูปที่ decode แล้ว, ตาราง font + glyph ที่ใช้, shadow mask, สำเนาของรูปใน bundle, <code>malloc()</code> ทั่วไป, stack ของ task <code>http</code> 10 KB, buffer ของ TLS, NimBLE host, TX buffer ของ WiFi</td></tr>
+<tr><td>Flash (quad)</td><td>16 MB</td><td>firmware, system image, app slot, registry, LittleFS (ดู <a href="hardware.html#partitions">partition table</a>) อ่านผ่าน driver เท่านั้น ไม่ map</td></tr>
+</table>
+<div class="facts">
+  <div class="fact"><div class="v">~1.5 MB</div><div class="k">PSRAM ว่างหลังเปิด Calculator (9 ต.ค.)</div></div>
+  <div class="fact"><div class="v">~790 KB</div><div class="k">PSRAM ว่างบนหน้า Settings (ดีไซน์ใหม่, 9 ต.ค.)</div></div>
+  <div class="fact"><div class="v">≈850–960 KB</div><div class="k">PSRAM ว่างบนหน้าแรกของ แอปตาชั่ง (เดิม 15 KB)</div></div>
+  <div class="fact"><div class="v">≈465 KB</div><div class="k">PSRAM ว่างตลอดการใช้ แอปตาชั่ง คงที่ 20 รอบ</div></div>
+  <div class="fact"><div class="v">≈26 KB</div><div class="k">ตารางต่อ font face (weight, size) ที่หน้าใช้อยู่</div></div>
+  <div class="fact"><div class="v">≈48 KB</div><div class="k">SRAM ภายในว่างเมื่อเปิด Wi-Fi + Bluetooth</div></div>
+</div>
+<p>ตัวเลขดูได้ตลอดจากบรรทัด stats (<code>sram … psram … js … fonts-in-ram … KB</code>) และคำสั่ง text <code>heap</code> (SRAM ว่าง, block ใหญ่สุด, ต่ำสุดที่เคยลง, stack ที่ไม่เคยใช้ของแต่ละ task) ใน simulator ใช้คำสั่ง script <code>mem</code> ดู <a href="../tools/debugging.html#memory">การวัดผล</a></p>
+
+<h2 id="no-flash">กฎ: ไม่อ่าน flash ระหว่างแสดงผล</h2>
+<div class="bad"><p>Flash และ PSRAM ใช้ bus MSPI เดียวกัน การอ่าน flash ต่อเนื่องทำให้ fill DMA ดึงภาพจาก PSRAM ไม่ทัน จอจะกระตุก (วัดได้ 1170 ครั้งใน 2 วินาที เทียบกับ 0 ครั้งเมื่ออ่าน PSRAM) ดังนั้นสิ่งที่ถูกอ่านระหว่างวาดต้องอยู่ใน RAM และการอ่าน flash อื่นๆ ต้องแบ่งเป็นช่วงสั้นๆ</p></div>
+<p>กฎนี้บังคับด้วยโครงสร้าง ไม่ใช่ความระมัดระวัง: image ใน flash ไม่ถูก map เข้า address space เลย จึงไม่มี pointer ไหนชี้เข้า flash ได้ โค้ดที่ต้องการข้อมูลต้องผ่าน <code>ImageSource::read()</code> ที่คุมจังหวะเอง</p>
+
+<h3 id="imagesource"><code>ImageSource</code> และ <code>ImageSlice</code></h3>
+<table>
+<tr><th>Class</th><th>อยู่ที่</th><th>พฤติกรรม</th></tr>
+<tr><td><code>ImageSource</code></td><td><code>lib/rt/rt_base.h</code></td><td>interface: <code>size()</code>, <code>direct()</code> (pointer ถ้าอยู่ใน RAM), <code>read(off, dst, n)</code></td></tr>
+<tr><td><code>RamSource</code></td><td><code>rt_base.h</code></td><td>image ใน RAM (boot image ที่ฝังใน firmware, simulator) <code>inPlace=false</code> บังคับให้ไปทาง <code>read()</code> เหมือนบอร์ด (ใช้ทดสอบใน sim)</td></tr>
+<tr><td><code>PartitionSource</code></td><td><code>src/imageslot.cpp</code></td><td>อ่าน partition ด้วย <code>esp_partition_read</code> ทีละ 4 KB พัก 150 µs ระหว่างแต่ละครั้ง</td></tr>
+<tr><td><code>FileImage</code> (sim)</td><td><code>sim/main.cpp</code></td><td>ไฟล์บนดิสก์; <code>IOTDASH_SLOWMEM=1</code> จำลองบอร์ด</td></tr>
+<tr><td><code>ImageSlice</code></td><td><code>rt_base.h</code></td><td>ไฟล์หนึ่งใน archive: <code>data</code> (ถ้าใน RAM) หรือ <code>src + off</code> และถือ shared_ptr ของ source ไว้ไม่ให้หายระหว่างใช้</td></tr>
+</table>
+<p><code>Bundle::File</code> คือ <code>ImageSlice</code> ดังนั้น <code>Bundle::text()</code> และ <code>Bundle::bytes()</code> (สำเนาใน RAM) ใช้ได้กับทั้ง RAM และ flash โดยไม่ต้องรู้ว่าอยู่ที่ไหน</p>
+
+<h3>ใครอ่านอะไร เมื่อไร</h3>
+<table>
+<tr><th>ข้อมูล</th><th>วิธีอ่าน</th><th>เวลา</th></tr>
+<tr><td>HTML/CSS/JS ของหน้า</td><td><code>bundle().text()</code> ผ่าน PartitionSource (paced)</td><td>ตอนเปิดหน้า (phase <code>load</code>)</td></tr>
+<tr><td>รูป (<code>.img</code>) ใน bundle</td><td><code>bundle().bytes()</code> → decode ใน RAM</td><td>ตอนโหลดรูป</td></tr>
+<tr><td>ตาราง font (header, glyph, kerning, Thai)</td><td><code>FontFace::ensure()</code> คัดลอกช่วง <code>[0, bitmapOff)</code> เข้า PSRAM</td><td>ครั้งแรกที่ใช้ face</td></tr>
+<tr><td>Bitmap ของ glyph</td><td><code>FontFace::touch()</code> คัดลอกเฉพาะ glyph นั้น</td><td>ตอน shape ข้อความ (ก่อนวาด)</td></tr>
+<tr><td><code>fetch()</code> ไฟล์ในแอป</td><td><code>bundle().text()</code> (paced)</td><td>ตอน script ขอ</td></tr>
+<tr><td>ไฟล์บน storage (<code>Os::readFile</code>, fs ของแอป)</td><td><code>fread</code> 4 KB + <code>gIoPause()</code> (150 µs เมื่อ storage คือ flash)</td><td>ตอนขอ</td></tr>
+</table>
+
+<h3 id="hooks">Hook ของ platform</h3>
+<p>engine (<code>lib/rt</code>) ไม่รู้จักฮาร์ดแวร์ platform ตั้ง hook ใน <code>engineTask</code> (ค่า default ของ simulator ถือว่าหน่วยความจำเร็วทั้งหมด)</p>
+<table>
+<tr><th>Hook</th><th>บนบอร์ด</th></tr>
+<tr><td><code>gIsSlowMemory(p)</code></td><td><code>flashMapped</code>: แปลง vaddr → paddr ด้วย MMU แล้วดูว่าเป็น FLASH0 ไหม</td></tr>
+<tr><td><code>gBulkCopy(dst, src, n)</code></td><td><code>pacedCopy</code>: ถ้า src อยู่ใน flash คัดลอกทีละ 4 KB พัก 150 µs</td></tr>
+<tr><td><code>gLargeFree()</code></td><td>PSRAM ว่าง</td></tr>
+<tr><td><code>gAllocBulk(n)</code></td><td><code>heap_caps_malloc(n, MALLOC_CAP_SPIRAM)</code></td></tr>
+<tr><td><code>gSlowPause()</code></td><td>150 µs (หลังอ่าน ~4 KB จากที่ช้าเป็นชิ้นเล็ก)</td></tr>
+<tr><td><code>gIoPause()</code></td><td>150 µs เมื่อ storage คือ LittleFS, ไม่พักเมื่อเป็น SD</td></tr>
+</table>
+
+<h2 id="fonts">Font ใน RAM ทีละ glyph</h2>
+<p>atlas ของ font (FNT1) เก็บ glyph ที่ rasterize ไว้แล้วสำหรับ family/weight/size หนึ่งๆ การคัดลอกทั้ง atlas เข้า RAM เคยทำให้ PSRAM หมดจนบอร์ด reboot จึงเปลี่ยนเป็น:</p>
+<ol>
+  <li><b>ตาราง</b> (header, glyph table, kerning, Thai placement) คัดลอกเข้า PSRAM ครั้งเดียวต่อ face (<code>ensure()</code>)</li>
+  <li><b>Bitmap</b> ของแต่ละ glyph คัดลอกตอนที่ <code>shapeText</code> ผลิต glyph นั้นออกมา (<code>touch()</code>) เก็บเป็น pointer แบบ atomic ต่อ glyph ทั้งสอง core จึงอ่านได้โดยไม่ต้อง lock</li>
+  <li>ระหว่างวาด <code>bitmap()</code> คืน pointer ใน RAM หรือ null (ยังไม่ได้อ่านเพราะหน่วยความจำไม่พอ) ผู้วาดข้าม glyph นั้น ไม่ไปอ่าน flash</li>
+  <li>ถ้า PSRAM ว่างน้อยกว่า glyph + 256 KB (<code>kFontReserve</code>) จะไม่คัดลอก (ข้อความบางตัวหายดีกว่าระบบล่ม)</li>
+  <li>สำเนาผูกกับ <code>(source, offset)</code> ใน registry <code>FaceResident</code> เมื่อ image ถูก unmount จะถูกทำเครื่องหมาย (<code>fontsDropSource</code>) และคืนหน่วยความจำเมื่อไม่มีใครใช้แล้ว (<code>fontsCollectResident</code>)</li>
+  <li><b>font เป็นของ document:</b> ทุกครั้งที่เปิดหน้าใหม่ (<code>Engine::open</code>) <code>FontManager::releaseResident()</code> ปล่อยตารางและ glyph ทุก face ที่อ่านมาจาก flash แล้ว collect ทันที และ <code>FontManager::clear()</code> ตอนเปลี่ยนแอปก็ทำแบบเดียวกัน หน้าใหม่โหลดเฉพาะ face ที่ตัวเองวาดกลับมาจาก flash เมื่อใช้</li>
+</ol>
+<p>ก่อนข้อ 6 สำเนาของ atlas ระบบไม่เคยถูกปล่อยและสะสมข้ามแอป (font ใน RAM เคยวัดได้ 105–456 KB แล้วแต่หน้า) ตัวเลขปัจจุบันอยู่ใน stats <code>fonts-in-ram</code></p>
+<h3 id="face-cost">ต้นทุนของ font face หนึ่งตัว</h3>
+<table>
+<tr><th>ส่วน</th><th>ขนาดโดยประมาณ</th><th>หมายเหตุ</th></tr>
+<tr><td>Glyph metrics</td><td>≈4.5 KB</td><td>ต่อ (family, weight, size)</td></tr>
+<tr><td>Kerning</td><td>≈6.5 KB</td><td></td></tr>
+<tr><td>ตำแหน่งสระ/วรรณยุกต์ไทย</td><td>≈14 KB</td><td>ส่วนที่ใหญ่ที่สุด</td></tr>
+<tr><td><b>รวมตาราง</b></td><td><b>≈26 KB</b></td><td>ตลอดเวลาที่หน้าใช้ face นั้น</td></tr>
+<tr><td>Bitmap ของ glyph</td><td>ตามจำนวนตัวที่วาด</td><td>โหลดเฉพาะเมื่อ PSRAM ว่าง &gt; 256 KB</td></tr>
+</table>
+<p>ทุก (weight, size) ที่หน้าใช้จึงมีราคา ใช้ขนาดของระบบให้มากที่สุด (ดู <a href="../guide/app-development.html#memory">เขียนแอป</a>)</p>
+
+<h3>สำเนาของรูปและข้อมูลอื่น</h3>
+<p><code>residentCopy(src, len)</code> ให้สำเนาใน RAM เมื่อ src อยู่ในหน่วยความจำช้า (ใช้ร่วมกันจนกว่า image จะถูก drop) ถ้า PSRAM ว่างน้อยกว่า len + 384 KB (<code>kResidentReserve</code>) จะคืน src เดิม (อ่านในที่) <code>dropResident</code>/<code>collectResident</code> ทำงานแบบเดียวกับ font</p>
+
+<h2 id="caches">Cache ที่มีขอบเขต</h2>
+<h3>Shadow mask cache</h3>
+<p><code>box-shadow</code> ที่ blur สร้าง mask (profile + มุม 4 มุม) เป็น block เดียวจาก <code>gAllocBulk</code> และ cache ไว้ต่อ thread วาด (สอง core จึงไม่ต้อง lock)</p>
+<ul>
+  <li>จำกัด <b>96 KB ต่อ thread</b> แบบ LRU (ใช้ล่าสุดไว้ท้าย ลบจากหัว)</li>
+  <li>ค่า alpha ถูก quantize เป็นขั้นละ 4/255 ทำให้ shadow ที่ fade (alpha เปลี่ยนทุกเฟรม) ใช้ mask ซ้ำได้</li>
+  <li>ก่อนแก้: แถบล่างของ OS ที่ fade เข้าออกสร้าง mask ใหม่ทุกเฟรม ใช้แถบครั้งหนึ่งเสีย ~100 KB สะสมได้ ~800 KB จน PSRAM เหลือ 14 KB หลังแก้หน่วยความจำคงที่ไม่ว่าใช้กี่ครั้ง</li>
+  <li>ถ้าจอง mask ไม่ได้ (PSRAM หมด) shadow นั้นไม่ถูกวาดและ log บอก 3 ครั้งแรก แทนการ crash</li>
+</ul>
+<h3>JS realm ที่ยังถูกอ้างถึง</h3>
+<p>หน้าใหม่ได้ JS context ใหม่ แต่ context เก่าจะยังอยู่ถ้า background process แบบ APP ถือ closure ของมันไว้ (ประมาณ 400 KB ต่อ realm ในกรณี Calculator) ดู <a href="js-runtime.html#realms">JavaScript runtime</a> และ <a href="../project/known-issues.html">ข้อจำกัด</a></p>
+
+<h2 id="diet">ลดหน่วยความจำต่อหน้า (รอบ แอปตาชั่ง)</h2>
+<p>แอปตาชั่ง รุ่นแรกทำให้ PSRAM เหลือ 15 KB บนหน้าแรกแล้ว crash วัดบนบอร์ดได้ว่าหน้าหนึ่งกิน: CSS ≈600 KB (จาก CSS 34 KB), JS context ≈690 KB, script ของแอป ≈440 KB, การวาดครั้งแรก ≈450 KB (font ≈290 KB) การแก้ทั้งหมดให้ภาพเหมือนเดิมทุก pixel (เทียบภาพใน sim) และผ่าน ASAN</p>
+<table>
+<tr><th>เรื่อง</th><th>แก้อย่างไร</th><th>ผล</th></tr>
+<tr><td>Source ของ function</td><td>QuickJS ไม่เก็บ source text (<code>QJS_KEEP_FUNCTION_SOURCE</code> = 0) <code>Function.prototype.toString</code> ได้รูป <code>[native code]</code> (<a href="js-runtime.html#nosource">รายละเอียด</a>)</td><td>≈130 KB ต่อการเริ่มหน้า, ≈160 KB ของ script แอปตาชั่ง</td></tr>
+<tr><td>Parse CSS ซ้ำ</td><td>stylesheet ของหน้าเคยถูก parse ใหม่ทุกครั้งที่ parser เจอ <code>&lt;link&gt;</code> ระหว่างอ่าน HTML ตอนนี้ <code>Engine::building_</code> เลื่อน <code>collectStyles()</code> ไปทำครั้งเดียวตอนจบ</td><td rowspan="2">CSS ของ แอปตาชั่ง ≈600 KB → ≈300 KB</td></tr>
+<tr><td>ขนาดของ declaration</td><td>vector ของ declaration และ rule ถูก <code>shrink_to_fit</code>; <code>Value</code> ย้ายส่วนที่ใช้น้อย (<code>len2</code>, <code>str</code>, <code>obj</code>) ไปไว้ใน <code>ValueExt</code> แบบ copy-on-write ที่ใช้ร่วมกัน: 132 → 68 byte ต่อค่าบนบอร์ด; ข้อความของ keyword เก็บเฉพาะ inline style (ให้ <code>element.style.x</code> อ่านกลับได้)</td></tr>
+<tr><td>Computed style ของ element ที่ถูกถอด</td><td><code>Engine::forgetSubtree</code> ลบ computed style (≈1.1 KB ต่อ element บนบอร์ด) ของ element ที่ออกจาก document และคำนวณใหม่ถ้ามันกลับเข้ามา script มักถือจอเก่าไว้จนกว่า GC จะมา</td><td>จอที่ถูกแทนที่ไม่ถือ style</td></tr>
+<tr><td>Font ข้ามหน้าและข้ามแอป</td><td>ปล่อยทุกครั้งที่เปิด document ใหม่และตอนเปลี่ยนแอป (<a href="#fonts">ด้านบน</a>)</td><td>สำเนาของ atlas ระบบไม่สะสมอีก</td></tr>
+<tr><td>Wrapper ใน cycle</td><td>GC เมื่อ node ใต้ wrapper ถูกถอด ≥ 150 ตัวและหน้านิ่ง 600 ms (ห่างกัน ≥ 2 วินาที, ≈35 ms) (<a href="js-runtime.html#gc">รายละเอียด</a>)</td><td>หยุดการลด ≈5 KB ต่อรอบ</td></tr>
+<tr><td>ฝั่งแอป</td><td>โลโก้ 84 px ส่งที่ 84 px แทน 276 px (85 KB → 21 KB ใน RAM), <code>#kit</code> ที่ <code>display: none</code> ให้ build เห็นขนาดตัวเลขใหญ่</td><td>ดู <a href="../guide/app-development.html#memory">เขียนแอป</a></td></tr>
+</table>
+<div class="ok"><p><b>ผลบนบอร์ด (แอปตาชั่ง):</b> PSRAM ว่างบนหน้าแรก 15 KB → ≈850–960 KB; เดิน login → สถานที่ → วัสดุ → batch → สรุป ได้ ≈465 KB และคงที่ตลอด 20 รอบ (เดิมลด ≈5 KB ต่อรอบ)</p></div>
+<p>วิธีหาว่าหน่วยความจำไปไหน: คำสั่ง <code>mem [tag]</code> ใน script ของ sim (heap ที่ใช้, JS heap, font, สำเนา resident) ระหว่างแต่ละหน้า, <code>IOTDASH_SLOWMEM=1</code> ให้ font/รูปถูกคัดลอกแบบบอร์ด, และ <code>MallocStackLogging=1</code> + <code>malloc_history PID -allBySize</code> ของ macOS ที่สองจุดเวลาแล้วเทียบตาม frame ของ <code>rt::</code> (วิธีที่เจอปัญหา GC) บนบอร์ดใช้ <code>heap</code> และ <code>s</code></p>
+
+<h2 id="internal">SRAM ภายในและ radio</h2>
+<p>WiFi, Bluetooth และ stack ของ task ต้องใช้ SRAM ภายใน ส่วน engine จองหน่วยความจำเล็กๆ จำนวนมาก ถ้าปล่อยให้ <code>malloc()</code> เลือก SRAM สำหรับ block เล็ก (ค่าเริ่มต้นของ ESP-IDF) engine จะกิน SRAM จน radio เปิดไม่ได้ จึงตั้ง:</p>
+<ul>
+  <li><code>CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=0</code>: <code>malloc()</code> เลือก PSRAM ก่อนทุกขนาด ผู้ที่ต้องการ internal ขอด้วย capability (<code>MALLOC_CAP_INTERNAL</code>) เอง</li>
+  <li><code>CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC=y</code>: buffer ของ TLS (~40 KB ต่อ connection) ใน PSRAM ก่อนหน้านี้ HTTPS ล้มด้วย <code>mbedtls_ssl_setup -0x7F00</code> (หน่วยความจำไม่พอ) เมื่อเปิด radio</li>
+  <li>stack ของ task <code>http</code> (10 KB) จองใน PSRAM (<code>xTaskCreatePinnedToCoreWithCaps</code>)</li>
+  <li>WiFi TX buffer แบบ dynamic, NimBLE host จาก PSRAM, data cache 32 KB, bounce buffer 12 แถว, UART RX ของ dev link 6 KB, task <code>probe</code> สร้างเมื่อใช้ครั้งแรก</li>
+</ul>
+<p>radio ตรวจ SRAM ว่างก่อนเปิด (WiFi 34 KB, BLE 30 KB) และปฏิเสธพร้อมข้อความถ้าไม่พอ เมื่อเปิดทั้งสองแล้ว SRAM ยังว่าง ≈48 KB ดู <a href="connectivity.html#memory">Wi-Fi และ Bluetooth</a></p>
+
+<h2 id="slots">Flash slot ของ image</h2>
+<p>ดูหลักการใน <a href="../concepts/os.html#images">iotdash OS</a> สรุป:</p>
+<ul>
+  <li>System image → partition <code>sys</code> (2.25 MB), app image → <code>slots</code> (3 × 1.5 MB)</li>
+  <li>header 4 KB <code>ISL1</code> + key + hash ทำให้รู้ว่า slot มี image ไหนอยู่ ไม่ต้องคัดลอกซ้ำ</li>
+  <li>คัดลอกทีละ 64 KB ต่อ <code>step()</code> (erase + write) อ่านจาก storage ทีละ 4 KB พัก 150 µs</li>
+  <li>image ที่ใหญ่เกิน slot จะ error "image of N KB does not fit its M KB flash slot"</li>
+</ul>
+
+<h2 id="storage">Storage ของ OS</h2>
+<table>
+<tr><th></th><th>SD card</th><th>LittleFS ใน flash</th></tr>
+<tr><td>Mount point</td><td><code>/sd</code> (FAT ผ่าน VFS)</td><td><code>/flash</code> (partition <code>fs</code>, 5.2 MB)</td></tr>
+<tr><td>Bus</td><td>SPI2 (11/12/13) + CS ผ่าน CH422G</td><td>MSPI (ร่วมกับ PSRAM): อ่านทีละ 4 KB พัก 150 µs</td></tr>
+<tr><td>เลือกเมื่อ</td><td>มีการ์ดและ <code>storage</code> ≠ <code>flash</code></td><td>ไม่มีการ์ดตอน boot หรือ <code>storage flash</code></td></tr>
+<tr><td>Format</td><td><code>sd.format()</code> (FAT ทั้งการ์ด)</td><td><code>LittleFS.format()</code></td></tr>
+<tr><td><code>sdInfo().type</code></td><td>SDHC/SDSC/…</td><td><code>FLASH</code>, name <code>internal</code></td></tr>
+</table>
+<p>LittleFS ถูก mount ด้วย <code>formatOnFail = true</code> partition ใหม่จึงพร้อมใช้ทันที เครื่องมือฝั่งคอมพิวเตอร์ (<code>DeviceCard</code>) เขียนผ่าน dev link จึงไม่ต้องรู้ว่าบอร์ดใช้ storage ตัวไหน</p>
+
+<h3 id="layout">Layout ของไฟล์</h3>
+<pre><code>/system/
+  os.idb                 <span class="c">system image (IDB1)</span>
+  os.json                <span class="c">{"version": "0.1.0", "hash": "…"}</span>
+  memory.json            <span class="c">localStorage ของ home และ system app</span>
+  data/                  <span class="c">ไฟล์ของ system app</span>
+  assets/default-icon.img
+/applications/&lt;id&gt;/
+  app.json               <span class="c">{"title", "version", "hash", …}</span>
+  app.idb                <span class="c">image ของแอป (IDB1)</span>
+  icon.img               <span class="c">icon (IMG1) ไม่บังคับ</span>
+  memory.json            <span class="c">localStorage ของแอป</span>
+  data/                  <span class="c">ไฟล์ของแอป (open(), fs.*)</span></code></pre>
+
+<h3 id="persistent">ข้อมูลถาวรอื่นๆ</h3>
+<table>
+<tr><th>ข้อมูล</th><th>ที่เก็บ</th><th>หายเมื่อ</th></tr>
+<tr><td>Registry (darkMode, clock24, wifi.enabled, …)</td><td>NVS partition <code>reg</code>, namespace <code>registry</code>, key <code>json</code></td><td>factory reset, Reset registry</td></tr>
+<tr><td>เครือข่าย Wi-Fi ที่บันทึก (<code>secure.wifi</code>), อุปกรณ์ BLE ที่จำไว้ (<code>bt.devices</code>)</td><td>registry (ด้านบน)</td><td>Forget, factory reset, Reset registry (เครือข่ายใน <code>secrets.json</code> กลับมาตอนระบบเริ่ม)</td></tr>
+<tr><td>Wi-Fi ที่ติดมากับระบบ</td><td><code>system/private/secrets.json</code> ใน <code>os.idb</code></td><td>deploy system ใหม่</td></tr>
+<tr><td>โหมด storage</td><td>NVS <code>iotdash</code>, key <code>storage</code> (<code>flash</code>/<code>auto</code>)</td><td>flash erase ทั้งชิป</td></tr>
+<tr><td>localStorage ของแอป</td><td><code>memory.json</code> บน storage</td><td>ลบแอป, format</td></tr>
+<tr><td>sessionStorage</td><td>Map ในหน่วยความจำ ต่อหน้า</td><td>เปลี่ยนหน้า</td></tr>
+</table>
+</main>
+</body>
+</html>

@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Simulator — iotdash docs</title>
+<link rel="stylesheet" href="../assets/docs.css">
+<script src="../assets/nav.js" defer></script>
+</head>
+<body>
+<nav id="sidebar"></nav>
+<main>
+<div class="crumb">เครื่องมือและการ debug</div>
+<h1>Simulator</h1>
+<p class="lead"><code>sim/main.cpp</code> compile engine ชุดเดียวกับบอร์ด (<code>lib/rt</code> + QuickJS) สำหรับ macOS/Linux จำลองจอ 800×480 RGB565, page buffer และการวาดเป็น band แบบเดียวกับบอร์ด รันได้ทั้งแบบหน้าต่าง (SDL2) และแบบ script (headless) ที่ถ่ายภาพได้ ใช้ทดสอบ OS, แอป และตรวจความถูกต้องของ engine ด้วย sanitizer</p>
+<div id="toc"></div>
+
+<h2 id="build">Build</h2>
+<pre><code><span class="c"># ปกติ: iotdash.py build ให้อัตโนมัติ (Release, sim/build)</span>
+cmake -S sim -B sim/build -DCMAKE_BUILD_TYPE=Release &amp;&amp; cmake --build sim/build -j 8
+
+<span class="c"># AddressSanitizer</span>
+cmake -S sim -B sim/build-asan -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_FLAGS="-fsanitize=address -fno-omit-frame-pointer"
+cmake --build sim/build-asan -j 8
+
+<span class="c"># ThreadSanitizer (ตรวจการวาดสองคอร์)</span>
+cmake -S sim -B sim/build-tsan -DCMAKE_CXX_FLAGS="-fsanitize=thread" &amp;&amp; cmake --build sim/build-tsan -j 8
+IOTDASH_SPLIT=1 sim/build-tsan/iotdash-sim …</code></pre>
+<p>ต้องมี ZLIB; SDL2 ไม่บังคับ (ไม่มีก็ใช้ได้เฉพาะ <code>--shot</code>/<code>--script</code>) build ที่มี sanitizer ใช้ stack ของ JS มากกว่า ให้ตั้ง <code>RT_JS_STACK=256</code> (KB)</p>
+
+<h2 id="run">การรัน</h2>
+<pre><code><span class="c"># OS ทั้งระบบ (card ของ sim + boot image)</span>
+iotdash os sim --script "launch calculator; wait 300; shot calc.png"
+sim/build/iotdash-sim --os os/build/sdcard --boot os/build/boot.idb [--script "…"] [--shot out.png]
+
+<span class="c"># แอปเดี่ยว (ไม่มี OS)</span>
+sim/build/iotdash-sim APP/build/bundle.bin [--page x.html] [--script "…"] [--shot out.png]</code></pre>
+<ul>
+  <li>มี <code>--script</code> หรือ <code>--shot</code> = headless: รัน script แล้วจบ (ถ้า script ไม่มี <code>shot</code> จะถ่าย <code>--shot</code> ให้ตอนท้าย)</li>
+  <li>ไม่มี = เปิดหน้าต่าง: เมาส์ = นิ้ว, ล้อเมาส์ = scroll, พิมพ์ได้ (Backspace, Enter, ลูกศร, Esc), <kbd>F2</kbd> บันทึก <code>sim-shot.png</code>, <kbd>F5</kbd>/<kbd>⌘R</kbd> reload, โหมดแอปเดี่ยว reload เองเมื่อ bundle เปลี่ยน</li>
+  <li>เวลาใน script เป็น <b>เวลาเสมือน</b>: <code>wait 300</code> เดิน engine ไป 300 ms ทันทีทีละเฟรม (39 Hz) ผลจึงเหมือนเดิมทุกครั้ง (ยกเว้น watchdog ของ JS ที่ใช้นาฬิกาจริง)</li>
+  <li>slide ระหว่างหน้าในหน้าต่างถูกจำลองแบบเดียวกับ compositor ของบอร์ด</li>
+</ul>
+
+<h2 id="script">คำสั่งใน script</h2>
+<p>คั่นคำสั่งด้วย <code>;</code> หรือขึ้นบรรทัดใหม่ ก่อนคำสั่งแรกจะรัน 400 ms ให้หน้าโหลดเสร็จ</p>
+<table>
+<tr><th>คำสั่ง</th><th>ทำอะไร</th></tr>
+<tr><td><code>wait MS</code></td><td>เดินเวลาเสมือน</td></tr>
+<tr><td><code>sleep MS</code></td><td>รอเวลาจริง (ให้ process อื่นแก้ card ระหว่างนั้น เช่นทดสอบ install ขณะรัน)</td></tr>
+<tr><td><code>tap X Y</code></td><td>DOWN แล้ว UP หลัง 60 ms</td></tr>
+<tr><td><code>tapel SELECTOR</code></td><td>แตะกลาง element แรกที่ตรง selector (รวม overlay ภายในเช่นคีย์บอร์ด)</td></tr>
+<tr><td><code>dragel SELECTOR DX</code></td><td>ลาก element ไปทางแนวนอน DX px ใน 12 ขั้น</td></tr>
+<tr><td><code>down X Y</code>, <code>move X Y</code>, <code>up X Y</code></td><td>pointer ทีละ event (+16 ms)</td></tr>
+<tr><td><code>drag X1 Y1 X2 Y2 [MS=300]</code></td><td>ลากแบบเส้นตรง</td></tr>
+<tr><td><code>swipeup</code></td><td>ปัดขึ้นจากขอบล่าง (เปิดแถบระบบ)</td></tr>
+<tr><td><code>type TEXT</code>, <code>key NAME</code></td><td>พิมพ์ข้อความ / กดปุ่ม (<code>Backspace</code>, <code>Enter</code>, …) ใน input ที่ focus</td></tr>
+<tr><td><code>eval JS</code></td><td>รัน JS แล้วพิมพ์ผล <code>eval&gt; …</code></td></tr>
+<tr><td><code>shot FILE.png</code></td><td>บันทึก front buffer</td></tr>
+<tr><td><code>open URL</code></td><td>เปิดหน้าใน bundle โดยตรง</td></tr>
+<tr><td><code>launch ID</code>, <code>home</code>, <code>back</code></td><td>เทียบเท่าการกระทำของ OS (+400 ms)</td></tr>
+<tr><td><code>regset KEY JSON</code></td><td>ตั้ง registry (เช่น <code>regset darkMode true</code>)</td></tr>
+<tr><td><code>appschanged ID</code></td><td>จำลอง frame <code>APPS_CHANGED</code></td></tr>
+<tr><td><code>reboot</code></td><td><code>Os::reloadSystem()</code></td></tr>
+<tr><td><code>ospage</code></td><td>พิมพ์แอป/หน้า/ความลึกของ stack ปัจจุบัน</td></tr>
+<tr><td><code>stats</code></td><td>fps, เวลา style/layout/paint/frame, damage</td></tr>
+<tr><td><code>bench [N=30]</code></td><td>วาดใหม่ทั้งจอ N ครั้ง พิมพ์ ms ต่อครั้ง</td></tr>
+<tr><td><code>relayout [N=30]</code></td><td>layout ทั้งหน้า N ครั้ง</td></tr>
+<tr><td><code>prof</code></td><td>ครั้งแรกเริ่มเก็บ profile, ครั้งที่สองพิมพ์และ reset</td></tr>
+<tr><td><code>micro</code>, <code>cliptest</code></td><td>micro-benchmark ของ raster, ทดสอบ clipping</td></tr>
+<tr><td><code>dbg N</code></td><td>ตั้ง <code>rt::gDebugFlags</code> แล้ววาดใหม่ทั้งจอ (เช่น <code>dbg 16</code> = input log)</td></tr>
+<tr><td><code>split 0|1|2</code></td><td>วาด band แบบ 1 thread / 2 thread (เหมือนบอร์ด) / แบ่งครึ่งใน thread เดียว (ตรวจว่าการตัดซ้ายขวาไม่เปลี่ยนภาพ)</td></tr>
+<tr><td><code>spincheck</code></td><td>เรียก <code>update()</code> โดยไม่เดินเวลา ต้องหยุดวาดเอง (ไม่งั้นบอร์ดจะ spin ไม่ได้พัก)</td></tr>
+<tr><td><code>layoutcheck</code></td><td>พิมพ์จำนวน partial layout ที่ตรวจแล้ว/ไม่ตรง (ต้องรันด้วย <code>RT_CHECK_LAYOUT=1</code>)</td></tr>
+<tr><td><code>mem [tag]</code></td><td>(macOS) heap ที่ใช้อยู่ทั้งหมด (ใกล้เคียงสิ่งที่ PSRAM ถือบนบอร์ด), JS heap, font ใน RAM และสำเนา resident: <code>mem&lt;tag&gt;: N KB in use (js N KB, fonts N KB, resident N KB)</code></td></tr>
+<tr><td><code>scale KG</code>, <code>scale OL</code></td><td>วางน้ำหนักบนตาชั่ง BLE ปลอม / เกินพิกัด</td></tr>
+<tr><td><code>scaleoff</code></td><td>ตาชั่งปลอมหลุดการเชื่อมต่อ</td></tr>
+</table>
+<pre><code>iotdash-sim --os os/build/sdcard --boot os/build/boot.idb --script "
+  launch calculator; wait 500
+  tapel [data-k='7']; tapel [data-k='+']; tapel [data-k='5']; tapel [data-k='=']
+  stats; shot calc.png
+  tapel #toScientific; wait 400; ospage
+  back; wait 400; home; wait 400; shot home.png"</code></pre>
+
+<h2 id="env">Environment variable</h2>
+<table>
+<tr><th>ตัวแปร</th><th>ผล</th></tr>
+<tr><td><code>IOTDASH_BUFFERS=2|3</code></td><td>จำนวน page buffer (ค่าเริ่มต้น 2 เหมือนบอร์ด)</td></tr>
+<tr><td><code>IOTDASH_SPLIT=0|1|2</code></td><td>โหมดวาด band (เหมือนคำสั่ง <code>split</code>)</td></tr>
+<tr><td><code>IOTDASH_BAND_ROWS=N</code></td><td>บังคับความสูงของ band (ค่าเริ่มต้นเหมือนบอร์ด: 16 KB ต่อ band, สูงสุด 64 แถว) ใช้ตรวจ culling</td></tr>
+<tr><td><code>IOTDASH_DAMAGECHECK=1</code></td><td>ทุกเฟรมที่ present ถูกเทียบกับการวาดใหม่ทั้งจอ ถ้าต่างจะพิมพ์ <code>damagecheck: … px differ in x,y wxh</code> และบันทึก <code>/tmp/damage_N_shown.png</code>/<code>_ref.png</code> (6 ครั้งแรก) พื้นที่ที่ไม่ถูกวาดเป็นสีม่วงแดง</td></tr>
+<tr><td><code>IOTDASH_SLOWMEM=1</code></td><td>image ถูกอ่านผ่าน <code>read()</code> แทนการใช้ในที่ (เหมือน flash slot ของบอร์ด) ทดสอบเส้นทางคัดลอก font/รูป</td></tr>
+<tr><td><code>RT_JS_STACK=KB</code></td><td>stack สูงสุดของ QuickJS (ค่าเริ่มต้น 32)</td></tr>
+<tr><td><code>RT_CHECK_LAYOUT=1</code></td><td>ทุก partial layout ถูกเทียบกับ full layout</td></tr>
+<tr><td><code>RT_STYLE_DEBUG=1</code></td><td>พิมพ์ขนาดของ rule index และค่า flag sibling/state-on-ancestors</td></tr>
+<tr><td><code>RT_DAMAGE_DEBUG=1</code></td><td>พิมพ์สี่เหลี่ยมที่วาดแต่ละเฟรมและ buffer ที่ present</td></tr>
+<tr><td><code>RT_WANT_DEBUG=1</code></td><td>พิมพ์เหตุผลที่ engine ต้องวาดเฟรม (style/layout/paint/js/…) ใช้หาสาเหตุที่ไม่ยอมหยุดวาด</td></tr>
+<tr><td><code>RT_DUMP_LAYOUT=1</code></td><td>dump กล่อง layout</td></tr>
+</table>
+
+<h2 id="radio">Wi-Fi และ Bluetooth ปลอม</h2>
+<p><code>sim/fake_radio.h</code> แทน radio ของบอร์ด: เครือข่ายปลอม 5 เครือข่าย (เช่น <code>Home-WiFi</code> / <code>home1234</code>, <code>Cafe Free WiFi</code> ไม่มีรหัส) และอุปกรณ์ BLE ปลอม 4 ตัว รวมตาชั่ง <code>BLE-Scale-01</code> ที่ส่ง <code>ST,GS,+0012.34kg\r\n</code> 4 ครั้งต่อวินาที การตรวจอินเทอร์เน็ตและ fetch ภายนอกไปจริงผ่าน <code>curl</code> รายการทั้งหมดอยู่ที่ <a href="../core/connectivity.html#sim">Wi-Fi และ Bluetooth</a></p>
+
+<h2 id="web">ในเบราว์เซอร์ (WebAssembly)</h2>
+<p><code>web/build.sh</code> compile engine + OS ด้วย Emscripten (SDK ใน <code>~/emsdk</code>) ได้ <code>web/dist/</code>: <code>iotdash.js</code> + <code>iotdash.wasm</code> (~2 MB), <code>iotdash-web.js</code> (driver) และ system image เว็บ iotstore ใช้ตัวนี้ในหน้า Simulate (<code>npm run engine</code> คัดลอกไป <code>frontend/public/iotdash</code>) ทดสอบเร็วๆ: <code>cd web/dist &amp;&amp; python3 -m http.server</code> แล้วเปิด <code>demo.html?pkg=&lt;url ของ .idbz&gt;</code></p>
+<pre><code>import { IotdashSim } from './iotdash-web.js';
+const sim = new IotdashSim({ canvas, base: '/iotdash/', onLog, onRadio, onTare });
+await sim.init();
+const app = sim.installPackage(await (await fetch(url)).arrayBuffer());   // IDBZ
+sim.boot(); sim.launch(app.id);
+sim.setInternet(false); sim.setWifiReach(true); sim.scalePower(true);
+sim.scale({ kg: 1.25, stable: true });      // สิ่งที่ตาชั่ง BLE ปลอมส่ง</code></pre>
+<ul>
+  <li><code>web/web_main.cpp</code>: <code>WebPlatform</code> (fetch และ download ผ่าน <code>fetch()</code> ของเบราว์เซอร์, การ์ดเป็น MEMFS <code>/card</code>, radio = <code>sim/fake_radio.h</code>) และ <code>WebDisplay</code> 2 buffer ที่ page อ่านเป็น RGB565</li>
+  <li>การตรวจอินเทอร์เน็ตของ OS ไปที่ <code>sim:probe</code> ซึ่ง page ตอบเองตามสวิตช์ internet; fetch ของแอปออกจากเบราว์เซอร์จริง (ติด CORS ได้)</li>
+  <li>registry เริ่มต้นมี <code>Home-WiFi</code> เป็นเครือข่ายที่บันทึกไว้</li>
+</ul>
+
+<h2 id="regression">ชุดตรวจก่อนลงบอร์ด</h2>
+<ol>
+  <li><code>IOTDASH_DAMAGECHECK=1 RT_CHECK_LAYOUT=1</code> + script ที่เดินทุกหน้า → ต้องไม่มี damagecheck และ <code>layoutcheck … 0 mismatched</code></li>
+  <li>รัน script เดียวกันกับ build ASAN (<code>RT_JS_STACK=256</code>)</li>
+  <li><code>IOTDASH_SLOWMEM=1</code> เพื่อทดสอบเส้นทางอ่านแบบบอร์ด</li>
+  <li><code>spincheck</code> บนหน้าที่นิ่ง ต้องได้ 0–1 เฟรม</li>
+  <li>เทียบภาพกับ Chromium ด้วย <code>os ref</code></li>
+</ol>
+<div class="note"><p>simulator ไม่จำลองเรื่อง bus ของ flash/PSRAM, tear หรือความเร็วจริงของบอร์ด ตัวเลขเวลาใน sim เร็วกว่าบอร์ดหลายเท่า เรื่องเวลาและ glitch ต้องวัดบนบอร์ดเสมอ (ดู <a href="debugging.html">การวัดผลและ debug</a>)</p></div>
+</main>
+</body>
+</html>

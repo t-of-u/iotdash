@@ -1,0 +1,10 @@
+{
+  "name": "rt",
+  "version": "0.1.0",
+  "description": "iotdash HTML/CSS/JS runtime",
+  "build": {
+    "flags": ["-O2", "-std=gnu++17", "-Wno-unused-variable", "-Wno-unused-function", "-Wno-sign-compare", "-Wno-missing-field-initializers"],
+    "unflags": ["-std=gnu++11", "-std=gnu++2b", "-Os"]
+  },
+  "dependencies": [{"name": "quickjs"}]
+}

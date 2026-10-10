@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<!-- Boot screen: built into the firmware (it shows before the card is read). The OS calls
+     bootStatus({text, progress, error, canFormat, version}) as it brings the system up. -->
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    font-family: Inter, sans-serif; color: #e2e8f0; overflow: hidden;
+    background: radial-gradient(circle at 50% 38%, #1e3a8a 0%, #0b1220 62%);
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+  }
+  .logo { width: 92px; height: 92px; margin-bottom: 18px; }
+  h1 { margin: 0; font-size: 30px; font-weight: 600; letter-spacing: .01em; }
+  .ver { margin-top: 4px; font-size: 14px; color: #64748b; }
+  .track { width: 300px; height: 6px; margin-top: 34px; border-radius: 3px; background: rgba(148, 163, 184, .22); overflow: hidden; }
+  .bar { width: 0; height: 100%; border-radius: 3px; background: #60a5fa; transition: width .25s ease-out; }
+  .text { margin-top: 14px; height: 22px; font-size: 16px; color: #cbd5e1; }
+  .error { margin-top: 6px; min-height: 20px; max-width: 520px; font-size: 14px; color: #fca5a5; text-align: center; }
+  .format {
+    margin-top: 18px; height: 44px; padding: 0 22px; border-radius: 12px; display: none; align-items: center;
+    background: #2563eb; color: #fff; font-size: 16px; font-weight: 600;
+  }
+  .format.show { display: flex; }
+  .format:active { opacity: .75; }
+</style>
+</head>
+<body>
+<svg class="logo" viewBox="0 0 96 96">
+  <rect x="6" y="6" width="84" height="84" rx="22" fill="#2563eb"/>
+  <rect x="26" y="26" width="18" height="18" rx="5" fill="#fff"/>
+  <rect x="52" y="26" width="18" height="18" rx="5" fill="#fff" fill-opacity=".75"/>
+  <rect x="26" y="52" width="18" height="18" rx="5" fill="#fff" fill-opacity=".75"/>
+  <rect x="52" y="52" width="18" height="18" rx="5" fill="#fff" fill-opacity=".5"/>
+</svg>
+<h1>iotdash</h1>
+<div class="ver" id="ver"></div>
+<div class="track"><div class="bar" id="bar"></div></div>
+<div class="text" id="text">Starting</div>
+<div class="error" id="error"></div>
+<div class="format" id="format">Format SD card</div>
+<script>
+  const $ = (id) => document.getElementById(id);
+  // the OS repeats the status while it waits for a card: touch the DOM only on a change
+  // (a repaint of this full-screen gradient is not free)
+  let last = {};
+  window.bootStatus = (s) => {
+    const v = {
+      text: s.text, error: s.error || '', ver: 'OS ' + s.version, format: !!s.canFormat,
+      bar: Math.round(Math.max(0, Math.min(1, s.progress)) * 100) + '%',
+    };
+    if (v.text !== last.text) $('text').textContent = v.text;
+    if (v.error !== last.error) $('error').textContent = v.error;
+    if (v.bar !== last.bar) $('bar').style.width = v.bar;
+    if (v.ver !== last.ver) $('ver').textContent = v.ver;
+    if (v.format !== last.format) $('format').classList.toggle('show', v.format);
+    last = v;
+  };
+  $('format').addEventListener('click', () => {
+    $('text').textContent = 'Formatting the SD card';
+    try { os.sd.format(); } catch (e) { $('error').textContent = e.message; }
+  });
+</script>
+</body>
+</html>

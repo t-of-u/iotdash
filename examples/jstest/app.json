@@ -1,0 +1,6 @@
+{
+  "id": "jstest",
+  "title": "JS Test",
+  "version": "1.0",
+  "description": "Engine checks: the JS and DOM APIs"
+}

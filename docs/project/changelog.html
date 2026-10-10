@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ประวัติการพัฒนา — iotdash docs</title>
+<link rel="stylesheet" href="../assets/docs.css">
+<script src="../assets/nav.js" defer></script>
+</head>
+<body>
+<nav id="sidebar"></nav>
+<main>
+<div class="crumb">โปรเจกต์</div>
+<h1>ประวัติการพัฒนา</h1>
+<p class="lead">ลำดับงานตั้งแต่เปิดบอร์ดครั้งแรกจนถึง OS ปัจจุบัน พร้อมการตัดสินใจสำคัญและเหตุผล เรียงจากเก่าไปใหม่ (วันที่ตามเวลาไทย)</p>
+<div id="toc"></div>
+
+<h2 id="bringup">1. เปิดบอร์ดและ driver จอ <span class="tag">8 ต.ค. 2026</span></h2>
+<ul>
+  <li>บอร์ดไม่ขึ้นเป็น device: ใช้ช่อง USB ที่ต่อชิป CH343 (UART) และเข้าโหมด download ด้วย BOOT + RESET เมื่อ auto-reset ไม่ทำงาน</li>
+  <li>driver RGB 800×480 แบบ bounce buffer เขียนเติมเอง และ benchmark ความเร็วการวาดหลายขนาด</li>
+  <li>ภาพ "ส่าย/เกย": interrupt ของจอย้ายไป IRAM, data cache 64 KB, compile แบบเน้นความเร็ว</li>
+  <li><b>การตัดสินใจ:</b> วาดผ่าน DMA blitter (CPU วาดลง SRAM, DMA เขียน PSRAM) แทน CPU เขียน PSRAM ตรงๆ ลด traffic ครึ่งหนึ่ง: เต็มจอจาก 20.7 เป็น 39 fps และภาพนิ่งขึ้น จำกัดอัตราเขียน PSRAM เพื่อไม่ให้แย่ง scan-out</li>
+</ul>
+
+<h2 id="engine">2. Engine HTML/CSS/JS บนชิป <span class="tag">8 ต.ค. 2026</span></h2>
+<ul>
+  <li>เป้าหมาย: เขียน UI ด้วย HTML/CSS/JS แล้วรันบนบอร์ดได้ พร้อมการเปลี่ยนหน้า, animation, ภาษาไทย</li>
+  <li>เริ่มจากแนวคิด pre-render ด้วย Chromium แล้วพัฒนาเป็น engine เต็ม (<code>lib/rt</code>): HTML parser, CSS cascade, layout (block/inline/flex/grid/table), QuickJS + Web API, form control, คีย์บอร์ดไทย, SVG, canvas</li>
+  <li>เครื่องมือ build ใช้ Chromium (Playwright) วัดหน้าเพื่อสร้าง font atlas ที่ต้องใช้ ตัดคำไทย และย่อรูป</li>
+  <li>Simulator ใช้โค้ด engine ชุดเดียวกัน</li>
+  <li><b>ปรับความเร็ว:</b> วาดเต็มจอจาก ~90 ms เหลือ ~27 ms, layout เมื่อนาฬิกาเปลี่ยนจาก 54 ms เหลือ 1.5 ms (partial relayout), เงาเร็วขึ้น ~4 เท่า, blend ใน 565 เร็วขึ้น ~11 เท่า, canvas/SVG cache เป็น layer, วาดสองคอร์ (ตรวจด้วย ThreadSanitizer), แก้ engine ที่ spin 100% ตอนว่าง</li>
+  <li>ข้อสังเกตสำคัญ: ชิปติดที่ cache miss (โค้ดรันจาก PSRAM) มากกว่าการคำนวณ</li>
+  <li>ตั้ง git repo ที่ <code>top/iot</code> (commit <code>ba514b7</code> Initial commit)</li>
+</ul>
+
+<h2 id="os">3. iotdash OS <span class="tag">8 ต.ค. 2026</span></h2>
+<ul>
+  <li>Backbone ของ OS: boot screen ฝังใน firmware, system image บน SD card, home screen, แอปทีละตัว, navigation stack, background process แบบ APP/PAGE, memory.json, registry (NVS), shell UI (แถบล่าง, dialog, launch overlay), Settings</li>
+  <li>image ถูกคัดลอกลง flash slot (<code>sys</code>, <code>slots</code>) แล้วใช้จากที่นั่น เปิดแอปเดิมซ้ำไม่ต้องคัดลอก</li>
+  <li>เครื่องมือ <code>os build/deploy/format/sim</code>, <code>app build/install/uninstall/list</code>, การเขียนไฟล์ลงบอร์ดผ่าน dev link</li>
+  <li>Settings แท็บ SD card: ข้อมูลการ์ด, ลบแอป, <b>Factory reset</b> (format แล้วเขียนระบบกลับ + ล้าง registry)</li>
+  <li><code>os/apps/install.sh</code> / <code>uninstall.sh</code>: ติดตั้ง/ลบแอปทีละตัวผ่าน USB, home อัปเดตทันที (<code>APPS_CHANGED</code>)</li>
+  <li>ภาพหน้าจอผ่าน USB ใช้ได้ (log ของ IDF เคยแทรกกลาง frame), boot screen ไม่วาดใหม่ทุก 2 วินาทีแล้ว</li>
+</ul>
+
+<h2 id="sd">4. ตรวจช่อง SD card <span class="tag">8 ต.ค. 2026</span></h2>
+<ul>
+  <li>การ์ด Kingston 4 GB อ่านไม่ได้ (<code>0x107</code> timeout) แม้ format FAT32 แล้ว</li>
+  <li>เพิ่มเครื่องมือวินิจฉัย: <code>sd</code> (CMD0 ดิบ), อ่านระดับขาจาก CH422G, probe แรงดันที่ GPIO6 พร้อมขับสาย SD ทีละเส้น</li>
+  <li>ผล: สัญญาณถึงขาช่องการ์ดครบทุกเส้น และ firmware ทางการของ Waveshare ก็ล้มเหลวเหมือนกัน → ช่องการ์ดเสีย (ดู <a href="../core/hardware.html#sd-fault">ฮาร์ดแวร์</a>)</li>
+</ul>
+
+<h2 id="flash">5. Storage บน flash ภายใน <span class="tag">9 ต.ค. 2026</span></h2>
+<ul>
+  <li>partition table ใหม่: เพิ่ม <code>fs</code> (LittleFS 5.2 MB) และ <code>reg</code>; ระบบใช้ SD เมื่อมี ไม่มีก็ใช้ <code>/flash</code> ด้วย layout เดียวกัน</li>
+  <li>คำสั่ง <code>storage flash|auto</code></li>
+</ul>
+
+<h2 id="glitch">6. แก้ glitch ทั้งระบบ <span class="tag">9 ต.ค. 2026</span></h2>
+<ul>
+  <li><b>รอบแรก:</b> พบว่าการอ่าน flash ระหว่างวาดแย่ง bus กับ scan-out (<code>F</code> = 1170 late / 2 s, <code>Q</code> = 0) → font เข้า RAM ทีละ glyph, รูปเข้า RAM, อ่านไฟล์แบบ pace, ลด page buffer เหลือ 2 (font ทั้ง atlas ทำ PSRAM หมดจน reboot)</li>
+  <li>ผู้ใช้ยังเห็น glitch → <code>late</code> วัดผิดสิ่ง; ผู้ใช้เสนอแยก layer (scan-out / frame create → push / touch / app)</li>
+  <li><b>สถาปัตยกรรม 4 layer</b> (ผู้ใช้อนุมัติ):
+    <ol>
+      <li>Scan-out: ตัววัด <b>tear</b> จาก owner bit ของ descriptor + timeline; ปิด <code>RESTART_IN_VSYNC</code>; DMA ของจอ priority สูงสุด → tear 0 (เดิม 12–14 / 3 s)</li>
+      <li>Frame create → push: เลิก map flash ทั้งหมด (<code>ImageSource</code>/<code>PartitionSource</code>), blitter รอ bus window</li>
+      <li>Touch: task แยก core 0 ทุก 8 ms ใส่คิวพร้อมเวลา, engine ดึงก่อน app และตื่นทันทีเมื่อมี touch</li>
+      <li>App: งบ JS 10 ms ต่อ tick, watchdog 3 วินาที, process/interval ที่ค้างถูกปิด</li>
+    </ol>
+  </li>
+  <li>commit <code>c191b88</code> "feat: iot-dash-kernel"</li>
+</ul>
+
+<h2 id="settings">7. Settings ใหม่ และ bug flex <span class="tag">9 ต.ค. 2026</span></h2>
+<ul>
+  <li>ข้อความในแถวของ Settings เยื้องขึ้น ~12 px: bug ของ engine ที่ flex line ไม่ถูก clamp ด้วย <code>min-height</code> ของ container (Flexbox §9.4 ขั้น 8) แก้ที่ engine</li>
+  <li>เพิ่ม <code>os ref</code> ให้ Chromium วาดหน้าใดก็ได้ไว้เทียบกับบอร์ด</li>
+  <li>ออกแบบ Settings ใหม่: แท็บแบบ tile, กลุ่ม Display/Clock พร้อมตัวอย่างเวลา, การ์ด storage, รายการแอปพร้อม icon, Danger zone, System แบบ key/value และ registry เป็น pill; ใช้เฉพาะขนาด font ที่ระบบมี (image 1747 → 1707 KB)</li>
+  <li>dialog ที่ค้างอยู่ตอนเปลี่ยนแอปถูกยกเลิกให้</li>
+</ul>
+
+<h2 id="calculator">8. Calculator ตอบสนองช้า <span class="tag">9 ต.ค. 2026</span></h2>
+<ul>
+  <li><code>ilog</code> พิสูจน์ว่าทุกการกดถึงแอป แต่ใช้ ~130 ms ต่อการกด และการแตะแรกหลังเปลี่ยนหน้ารอ 450–530 ms</li>
+  <li>แก้ invalidation: <code>:active</code> ไม่ restyle subtree ถ้าไม่มี selector ที่ต้องการ (<code>gStateDescendants</code>, <code>gSiblingSelectors</code>), custom property เทียบด้วยค่า → style 4 ms / 4 element</li>
+  <li>relayout boundary สำหรับ flex item ขนาดตายตัว → layout 2 ms</li>
+  <li>shadow mask cache แบบ LRU 96 KB + quantize alpha → PSRAM ไม่รั่วเมื่อใช้แถบล่าง</li>
+  <li>ผล: ~31 ms ต่อการกด, tear 0, ผ่าน ASAN/damagecheck/layoutcheck</li>
+</ul>
+
+<h2 id="docs">9. เอกสาร <span class="tag">9–10 ต.ค. 2026</span></h2>
+<ul>
+  <li>ชุดเอกสาร HTML นี้ใน <code>iotdash/docs/</code> (commit <code>336476a</code> "chore: docs")</li>
+  <li>10 ต.ค.: เพิ่มหน้า <a href="../core/connectivity.html">Wi-Fi และ Bluetooth</a>, ปรับหน้าอื่นตามงานข้อ 10–12 (API, registry, sdkconfig, หน่วยความจำ, ตัวเลขของ task/bounce buffer, คำสั่ง sim)</li>
+</ul>
+
+<h2 id="connectivity">10. Wi-Fi และ Bluetooth <span class="tag">9–10 ต.ค. 2026</span></h2>
+<ul>
+  <li>เป้าหมาย (phase 1): ให้แอปจริงใช้อินเทอร์เน็ตและอุปกรณ์ Bluetooth LE ได้ โดย OS เป็นเจ้าของการเชื่อมต่อ</li>
+  <li>ชั้นใหม่: <code>Platform::radio(op, argsJson, done)</code> + <code>Platform::radioEvent</code> (<code>engine.h</code>), policy ใน <code>lib/rt/os_net.cpp</code> (<code>Os::net</code>), radio ของบอร์ดใน <code>src/radio.cpp</code> (Wi-Fi + NimBLE central: scan, connect, GATT discovery, notify, read, write), radio ปลอมใน <code>sim/fake_radio.h</code></li>
+  <li>Settings แท็บ <b>Connection</b>: segment Wi-Fi (สวิตช์, เครือข่ายที่ใช้อยู่, รายการจาก scan พร้อมแถบสัญญาณและกุญแจ, sheet ใส่รหัสที่ <kbd>Enter</kbd> ส่งได้, Forget, scan ใหม่เป็นระยะ) และ Bluetooth (สวิตช์, อุปกรณ์ที่จำไว้, อุปกรณ์ใกล้เคียง, connect/disconnect/forget) 4G Cat-1 จะอยู่ในแท็บเดียวกัน (ยังไม่ทำ)</li>
+  <li>Registry: <code>wifi.enabled</code>, <code>bt.enabled</code>, <code>bt.devices</code>, <code>secure.wifi</code> (มองเห็นเฉพาะ system, Settings → System แสดงเป็น ••••••), <code>secure.secretsHash</code>, <code>net.probeUrl</code>; ต่ออัตโนมัติ (เครือข่ายที่ใช้ล่าสุดที่อยู่ในระยะ ทุก 30 วินาทีระหว่างไม่ได้ต่อ) และตรวจอินเทอร์เน็ตทุก 30 วินาที (8 วินาทีหลังล้มเหลว)</li>
+  <li><code>os/core/private/secrets.json</code> (gitignore) ติดไปกับ system image ที่ <code>system/private/</code> ซึ่งหน้าเปิดหรือ fetch ไม่ได้ รวมเข้า <code>secure.wifi</code> เมื่อ hash เปลี่ยน</li>
+  <li>JS API <code>os.net</code> / <code>os.wifi</code> / <code>os.bt</code>; การเปลี่ยนการเชื่อมต่อ (<code>wifi.power/connect/disconnect/forget</code>, <code>bt.power/forget</code>) เป็นของ system เท่านั้น frame <code>WIFI</code> ทาง USB เปลี่ยนจากเขียน NVS เองมาผ่าน <code>Os::net</code></li>
+  <li><b>SRAM ภายใน:</b> radio ต้องการ SRAM ที่ engine เคยกินไป: <code>malloc()</code> เลือก PSRAM, WiFi TX buffer แบบ dynamic, NimBLE host ใน PSRAM, central 2 link, data cache 64 → 32 KB, bounce buffer 16 → 12 แถว, UART RX ของ dev link 16 → 6 KB (เครื่องมือส่งทีละ 4 KB), stack ของ <code>http</code> ไป PSRAM, task <code>probe</code> สร้างเมื่อใช้ radio ตรวจ SRAM ก่อนเปิดและปฏิเสธแทนการ crash; เปิดทั้งสองแล้วเหลือ ≈48 KB</li>
+  <li>Dev link: frame ที่ขาดกลางทางถูกทิ้งหลังสายเงียบ 500 ms, เครื่องมือจับคู่ ACK กับชนิดของคำขอ (PING ที่ตอบช้าไม่ถูกนับเป็นคำตอบของคำสั่งอื่น)</li>
+  <li>Simulator: เครือข่ายปลอม (<code>Home-WiFi</code>/<code>home1234</code>, <code>TopuTofu</code>/<code>tofu1234</code>, <code>IoT-Lab</code>/<code>iotlab99</code>, <code>Cafe Free WiFi</code>, <code>Neighbor_5G</code>), ตาชั่ง BLE ปลอม <code>BLE-Scale-01</code> และคำสั่ง <code>scale</code>, <code>scaleoff</code></li>
+</ul>
+
+<h2 id="first-app">11. แอปจริงตัวแรก (ตาชั่ง BLE) <span class="tag">10 ต.ค. 2026</span></h2>
+<ul>
+  <li>เป้าหมาย (phase 2): port แอป Flutter ขนาดใหญ่ (ตาชั่ง BLE, login, ชั่งเป็น batch, ส่งข้อมูลขึ้น server ผ่าน HTTPS) มาเป็นแอป iotdash เพื่อทดสอบ Wi-Fi, Bluetooth, HTTPS และหน่วยความจำของ OS กับงานจริง ตัวแอปเป็นโปรเจกต์ภายนอก ไม่อยู่ใน repo นี้ (ในเอกสารเรียกว่า "แอปตาชั่ง")</li>
+  <li>แก้ใน engine ระหว่างทาง: handler ของ <code>keydown</code> ยกเลิกปุ่มได้ด้วย <code>preventDefault()</code> และการย้าย focus (Enter = ช่องถัดไป) ไม่พิมพ์ลงช่องเดิม; element ที่หลุดจาก paint list (<code>display: none</code>) ถูก damage จึงไม่ทิ้งภาพเก่า; stack ของ JS 24 → 32 KB (event ซ้อน ~16 frame); build ของแอปไม่ใส่ <code>icon.png/svg</code> ลงใน image (ใช้เป็น <code>icon.img</code> ข้างนอกอยู่แล้ว)</li>
+</ul>
+
+<h2 id="memory">12. หน่วยความจำ, HTTPS และ fetch <span class="tag">10 ต.ค. 2026</span></h2>
+<ul>
+  <li>ปัญหา: แอปตาชั่ง ทำให้ PSRAM เหลือ 15 KB บนหน้าแรกแล้ว crash วัดได้ว่าหน้าหนึ่งกิน CSS ≈600 KB, JS context ≈690 KB, script ≈440 KB, การวาดครั้งแรก ≈450 KB (font ≈290 KB)</li>
+  <li>QuickJS ไม่เก็บ source ของ function (<code>QJS_KEEP_FUNCTION_SOURCE</code> = 0, <code>toString</code> ได้รูป <code>[native code]</code>): ≈130 KB ต่อการเริ่มหน้า, ≈160 KB ของ script แอปตาชั่ง</li>
+  <li>CSS: stylesheet ของหน้า parse ครั้งเดียว (เคย parse ใหม่ทุก <code>&lt;link&gt;</code> ระหว่าง parse HTML, <code>Engine::building_</code>), vector ถูก trim, <code>Value</code> ย่อจาก 132 เป็น 68 byte (ส่วนที่ใช้น้อยไปอยู่ใน <code>ValueExt</code> แบบ copy-on-write), ข้อความ keyword เก็บเฉพาะ inline style: CSS ของ แอปตาชั่ง ≈600 → ≈300 KB</li>
+  <li>element ที่ถูกถอดออกจาก document ทิ้ง computed style (≈1.1 KB ต่อตัว) และคำนวณใหม่ถ้ากลับเข้ามา</li>
+  <li>font: ตารางและ glyph ที่อ่านจาก flash ถูกปล่อยเมื่อเปิด document ใหม่ (<code>FontManager::releaseResident</code>) และเมื่อเปลี่ยนแอป เดิมสำเนาของ atlas ระบบค้างและสะสมข้ามแอป; face หนึ่งกินตาราง ≈26 KB (ไทย ≈14 KB)</li>
+  <li>GC ของ JS หลังเปลี่ยนจอ: ถอด node ใต้ wrapper ≥ 150 ตัว + หน้านิ่ง 600 ms (ห่างกัน ≥ 2 วินาที, ≈35 ms บนบอร์ด) เพราะ cycle ของ wrapper ถือ layout/paint ที่ QuickJS ไม่นับ</li>
+  <li>ผลบนบอร์ด: หน้าแรกของ แอปตาชั่ง 15 KB → ≈850–960 KB; ทั้ง flow ≈465 KB คงที่ 20 รอบ (เดิมลด ≈5 KB ต่อรอบ) ภาพเหมือนเดิมทุก pixel ใน sim และผ่าน ASAN; เพิ่มคำสั่ง <code>mem</code> ใน sim และ <code>heap</code> บนบอร์ด</li>
+  <li><b>HTTPS:</b> <code>mbedtls_ssl_setup</code> ล้มด้วย -0x7F00 (หน่วยความจำไม่พอ) เมื่อเปิด radio แก้ด้วย <code>CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC=y</code> (buffer ของ TLS ใน PSRAM)</li>
+  <li><b>fetch บนบอร์ด:</b> ใช้ <code>esp_http_client</code> แบบ stream (open/write/fetch_headers/read) คำตอบ 4xx/5xx จึงถึงหน้าพร้อม body (เดิม 401 กลายเป็น <code>ESP_ERR_NOT_SUPPORTED</code>), ตาม redirect ไม่เกิน 5 ครั้ง (301/302/303 ไปต่อเป็น GET), stack ของ task <code>http</code> 10 KB ใน PSRAM</li>
+  <li>shadow ที่จอง mask ไม่ได้ถูกข้ามแทนการ crash</li>
+</ul>
+
+<h2 id="field">13. แก้จากการทดสอบกับ server และตาชั่งจริง <span class="tag">10 ต.ค. 2026</span></h2>
+<ul>
+  <li><b>บอร์ด reset หลัง login</b> (ต่อ Wi-Fi + ตาชั่ง BLE): task <code>http</code> copy คำตอบขนาด 174 KB แล้ว <code>operator new</code> จองไม่ได้จึง abort แก้: จอง body ครั้งเดียวจาก <code>Content-Length</code>, ตรวจที่ว่างก่อนขยาย (ไม่พอ = fetch ล้มด้วย <code>ESP_ERR_NO_MEM</code> ไม่ใช่ reset), move คำตอบแทน copy, <code>operator new</code> พิมพ์ขนาดและที่ว่างก่อน abort</li>
+  <li><b>engine</b>: ความกว้าง max-content ของกล่อง border-box ไม่นับ padding ที่เกิน width (ข้อความใน popup ขึ้น 2 บรรทัดจนปุ่มหลุดกรอบ)</li>
+  <li><b>engine</b>: บรรทัดที่ยาวเกินกล่องชิดขอบเริ่มต้นแม้ <code>text-align: center</code> (ตาม CSS Text และ Chrome เดิมตัดหัวข้อความ)</li>
+  <li><b>ไอคอน SVG เบี้ยว/เส้นผิด</b>: subpath ที่ไม่ปิดถูก stroke เป็นรูปปิด (ลูกศร "เปลี่ยนอุปกรณ์" กลายเป็นสามเหลี่ยม, คลื่น Wi-Fi เป็นเสี้ยวทึบ) และ <code>stroke-linecap/linejoin</code> จาก CSS ไม่มีผล (จุดหายไป ปลายเส้นตัด) แก้ใน <code>Path</code> และเพิ่มสอง property นี้ใน CSS ตรวจไอคอน 47 ตัวของแอปตาชั่งและ 18 ตัวของระบบเทียบกับ Chromium</li>
+  <li><b>จอกระพริบ/เลื่อนวูบตอนกดหรือเปลี่ยนหน้า</b>: interrupt ของจอย้ายจาก core 0 (ร่วมกับ Wi-Fi/Bluetooth) ไป core 1: <code>late</code> 10 → 0, tear 25 → 7 ใน flow ทดสอบ</li>
+  <li><b>กดไอคอนที่หน้า home แล้วไอคอนเบี้ยวไปทางขวา</b>: รูปที่มี <code>transform</code> ถูกวาดด้วยส่วนเลื่อนของ matrix อย่างเดียว (<code>scale(.9)</code> จึงกลายเป็นเลื่อน ~9 px ไปขวาล่างโดยไม่ย่อ) และเงาหายระหว่าง transform ตอนนี้รูปถูก sample ผ่าน matrix เต็ม (<code>fillPath</code> + image paint) และเงาย่อ/ขยายตามเมื่อ transform มีแค่เลื่อนกับ scale; ท่ากดของ home ปรับใหม่: กดลง 0.08 วินาทีเป็น 90% และจางลงเล็กน้อย ปล่อยแล้วเด้งกลับ 0.22 วินาที</li>
+  <li><b>Wi-Fi ที่บันทึกไว้ขึ้นว่ารหัสผิดหลัง reboot</b>: handshake ล้มครั้งแรกหลัง boot ถูกสรุปว่ารหัสผิดทันที (และหยุดการลองซ้ำของ driver) ตอนนี้ต้องล้ม 3 ครั้งติดกัน</li>
+</ul>
+
+<h2 id="store">14. iotstore: app store ของบอร์ด <span class="tag">10 ต.ค. 2026</span></h2>
+<p>ระบบติดตั้ง/ถอนแอปจาก store ครบวงจร: backend, เว็บ, แอปบนบอร์ด, เครื่องมือ และ simulator บนเบราว์เซอร์ (ตอนนี้อยู่ที่ <code>store/</code> ของ SDK, ดูข้อ 15)</p>
+<ul>
+  <li><b>แพ็กเกจ IDBZ</b> (<code>tools/idbz.py</code>): <code>app.json</code> + <code>icon.img</code> + <code>app.idb</code> ไม่บีบอัด SHA-256 ทุกไฟล์; <code>iotdash pack</code>, <code>install --pack</code>, <code>publish</code> (ตอนแรกเป็น <code>app pack/publish</code>, ดูข้อ 15)</li>
+  <li><b>บอร์ด</b>: <code>Platform::download</code> (stream ลง sink, ทั้งบอร์ด/desktop sim/เว็บ), <code>lib/rt/os_store.cpp</code> (เขียนระหว่างโหลด, ตรวจ checksum, staging, แทนไฟล์โดยข้อมูลอยู่ครบ), <code>os.store</code>, event <code>install</code>, <code>install.json</code> บอกที่มา (<code>store</code>/<code>usb</code>), <code>os.apps()</code> มี <code>source</code>/<code>versionId</code></li>
+  <li><b>แอป Apps</b> (system): Store / Installed, ป้ายที่มา, เวอร์ชันทั้งหมดของแต่ละแอป, ติดตั้ง/อัปเดต/ย้อนเวอร์ชัน/ลบ, ความคืบหน้า + ยกเลิก, รายการ offline</li>
+  <li><b>Backend</b> (<code>store/backend</code>): Lambda Python 3.13, DynamoDB <code>iotstore-users</code>/<code>-projects</code>/<code>-versions</code>, ไฟล์ใน S3 (อัปโหลดตรงจากเบราว์เซอร์ด้วย presigned POST), runner ในเครื่องด้วย moto</li>
+  <li><b>เว็บ</b> (<code>store/frontend</code>, React + Vite): project, เวอร์ชัน (อัปโหลด, notes, publish, ดาวน์โหลด, ลบ), ตรวจแพ็กเกจในเบราว์เซอร์ก่อนส่ง, หน้า Simulate</li>
+  <li><b>Simulator บนเบราว์เซอร์</b> (<code>web/</code>): engine + OS เป็น WebAssembly วาดลง canvas, Wi-Fi/อินเทอร์เน็ตจำลอง, อุปกรณ์ BLE และเกมตาชั่ง: ลากขวดพลาสติก แก้ว กระดาษ โลหะ ขึ้นจาน ค่าขึ้นแบบสปริงหน่วง (เกินนิดแล้วนิ่ง, STABLE) ส่งให้แอปผ่านตาชั่ง BLE จำลอง</li>
+  <li>ทดสอบ: ติดตั้ง/อัปเดต/ล้มกลางทาง (checksum เสีย, ไฟล์ขาด, 404, id ผิด) ใน desktop sim; เว็บครบ flow ใน Chromium headless; บอร์ดจริงอัปเดตแอปขนาด 481 KB จาก 1.0 → 1.1 จาก backend ในเครื่องใน 5.3 วินาที</li>
+</ul>
+
+<h2 id="sdk">15. SDK และ store แบบ framework <span class="tag">10 ต.ค. 2026</span></h2>
+<p>iotdash เป็น SDK (แบบ Flutter) และ iotstore เป็น store ที่ใครก็ host เองได้ ส่วนแอปเป็นของผู้เขียนและอยู่นอก repo</p>
+<ul>
+  <li><b>command line</b> <code>bin/iotdash</code> (ใส่ใน PATH, สร้าง <code>tools/.venv</code> เองครั้งแรก) และ <code>scripts/setup.sh</code>: <code>create</code>, <code>run</code> (simulator / <code>--device</code> / <code>--web</code>), <code>build</code>, <code>pack</code>, <code>install</code>, <code>uninstall</code>, <code>apps</code>, <code>publish</code>, <code>shot</code>, <code>doctor</code>, <code>firmware</code>; คำสั่งยุคก่อน OS ย้ายไป <code>iotdash legacy</code></li>
+  <li><b>แอปเป็นโปรเจกต์ที่ไหนก็ได้</b> (<code>tools/project.py</code>): <code>app.json</code> มี <code>id</code>, ผลการ build อยู่ใน <code>&lt;project&gt;/build/</code>, ไฟล์ของโปรเจกต์ (README, LICENSE, icon) ไม่เข้า image; <code>os/apps/</code> และ <code>install.sh</code>/<code>uninstall.sh</code> ถูกแทนด้วย <code>examples/</code> + <code>templates/app/</code> + CLI</li>
+  <li><b>แยกของที่ไม่ใช่ของ SDK ออก</b>: แอปตาชั่ง (เดิม <code>os/apps/digital-scales</code>) เป็นโปรเจกต์ภายนอกที่ build ด้วย SDK เหมือนแอปอื่น; ชื่ออุปกรณ์จำลองเป็นกลาง (<code>Home-WiFi</code>, <code>BLE-Scale-01</code>)</li>
+  <li><b>iotstore แบบ host เอง</b>: <code>deploy.env</code> + <code>scripts/deploy.sh</code> (สร้างหรืออัปเดต table, bucket + CORS, role, layer, function, function URL ในคราวเดียว, <code>--dry-run</code>, เก็บ JWT key เดิม) และ <code>scripts/deploy-web.sh</code>; ทุกอย่างตั้งชื่อตาม <code>STORE_NAME</code> (หลาย store ในบัญชีเดียวได้); <code>CORS_ORIGIN</code> หลาย origin, <code>SIGNUP=open|closed</code>, ชื่อ store มาจาก API; ทดสอบ deploy ครบสองรอบกับ AWS จำลอง (moto server)</li>
+  <li><b>store เป็นส่วนหนึ่งของ SDK</b>: ย้ายจาก <code>iotstore/</code> มาที่ <code>iotdash/store/</code> และสั่งผ่าน CLI: <code>iotdash store dev</code> (API + เว็บ), <code>test</code>, <code>deploy [--dry-run] [--config]</code>, <code>deploy-web</code>; <code>iotdash doctor</code> ตรวจเครื่องมือของ store ด้วย</li>
+</ul>
+
+<h2 id="decisions">สรุปการตัดสินใจที่สำคัญ</h2>
+<table>
+<tr><th>การตัดสินใจ</th><th>เหตุผล</th><th>ราคาที่จ่าย</th></tr>
+<tr><td>engine เขียนเองแทน browser</td><td>RAM/CPU ของ ESP32-S3 ไม่พอสำหรับ browser จริง ต้องคุมทุกการจองหน่วยความจำและการใช้ bus</td><td>รองรับ CSS/Web API เท่าที่ทำ ต้องเทียบกับ Chromium เสมอ</td></tr>
+<tr><td>font rasterize ล่วงหน้า</td><td>บนชิปไม่ต้องมี FreeType/HarfBuzz และตำแหน่งสระ/วรรณยุกต์ไทยถูกต้องตาม HarfBuzz</td><td>ขนาด/ตัวอักษรต้องรู้ตอน build</td></tr>
+<tr><td>image อยู่ใน flash slot ไม่ใช่การ์ด</td><td>อ่านแบบสุ่มได้เร็วกว่า SD ผ่าน SPI และ engine อ่านจาก source เดียวไม่ว่า storage จะเป็นอะไร</td><td>เวลาคัดลอกครั้งแรก, จำกัด 1.5 MB/แอป</td></tr>
+<tr><td>ห้ามอ่าน flash ระหว่างวาด</td><td>bus เดียวกับ PSRAM ที่จอใช้</td><td>PSRAM สำหรับสำเนา font/รูป</td></tr>
+<tr><td>2 page buffer</td><td>เหลือ PSRAM ให้ font</td><td>เฟรมที่เกิน 25 ms เสียหนึ่งรอบจอ</td></tr>
+<tr><td>JS context ใหม่ทุกหน้า</td><td>หน้าเริ่มสะอาด, โค้ดของหน้าเก่าหยุดแน่นอน</td><td>สถานะต้องส่งผ่าน storage/APP process</td></tr>
+<tr><td>Factory reset ล้าง registry ด้วย</td><td>"factory" หมายถึงค่าตั้งต้นทั้งหมด</td><td>ค่าตั้งหายด้วย</td></tr>
+<tr><td>OS เป็นเจ้าของการเชื่อมต่อ (registry, system เท่านั้นที่เปลี่ยนได้)</td><td>รหัส Wi-Fi ไม่ควรถึงมือแอป และทุกแอปเห็นสถานะเดียวกัน</td><td>แอปต้องส่งผู้ใช้ไป Settings</td></tr>
+<tr><td>Bluetooth เปิดเมื่อมีคนใช้</td><td>controller กิน SRAM ภายในที่มีน้อย</td><td>คำขอแรกช้ากว่า (รอ controller เริ่ม)</td></tr>
+<tr><td>Buffer ของ TLS อยู่ใน PSRAM</td><td>SRAM ภายในวาง TLS (~40 KB) คู่กับ radio ไม่พอ HTTPS จึงล้ม</td><td>buffer ของ TLS อยู่ในหน่วยความจำที่ช้ากว่า SRAM (ยังไม่ได้วัดผลต่อความเร็ว)</td></tr>
+<tr><td>QuickJS ไม่เก็บ source ของ function</td><td>script อยู่ในหน่วยความจำ 2–3 รอบ (≈130 KB ต่อหน้า)</td><td><code>Function.prototype.toString</code> ไม่คืน source</td></tr>
+<tr><td>Font เป็นของ document</td><td>สำเนาของ atlas สะสมข้ามหน้าและแอปจน PSRAM หมด</td><td>หน้าใหม่อ่านตารางจาก flash ใหม่ (paced)</td></tr>
+<tr><td>interrupt ของจออยู่ core 1</td><td>radio บน core 0 ปิด interrupt ได้นานหลาย ms จนเติม bounce buffer ไม่ทัน</td><td>interrupt แทรก engine บน core 1 (สั้น)</td></tr>
+<tr><td>fetch ล้มเมื่อ body ไม่มีที่ แทนการ abort</td><td>คำตอบจริงของ server ใหญ่ได้หลายร้อย KB</td><td>แอปต้องจัดการ error <code>ESP_ERR_NO_MEM</code></td></tr>
+<tr><td>Wi-Fi สรุปว่ารหัสผิดหลังล้ม 3 ครั้ง</td><td>handshake ที่รหัสถูกก็ล้มได้หลัง boot/ตอน Bluetooth ทำงาน</td><td>รหัสผิดจริงรู้ช้าลงไม่กี่วินาที</td></tr>
+<tr><td>แพ็กเกจไม่บีบอัด (IDBZ)</td><td>บอร์ดเขียนลงการ์ดระหว่างดาวน์โหลดได้เลย ไม่ต้องมี RAM/ที่ว่างสำหรับแตกไฟล์ และ <code>app.idb</code> ถูกบีบด้วย atlas อยู่แล้ว</td><td>ดาวน์โหลดใหญ่กว่า zip เล็กน้อย</td></tr>
+<tr><td>ติดตั้งผ่าน staging แล้วย้าย</td><td>ล้มกลางทาง (เน็ตหลุด, checksum เสีย) แอปเดิมยังใช้ได้</td><td>ต้องมีที่ว่างเท่าแพ็กเกจระหว่างติดตั้ง</td></tr>
+<tr><td>Simulator บนเว็บใช้ engine ตัวจริง (WebAssembly)</td><td>สิ่งที่เห็นในเว็บคือสิ่งที่บอร์ดวาด ไม่ใช่ HTML ใน browser</td><td>ต้องมี Emscripten ตอน build, wasm ~2 MB</td></tr>
+<tr><td>แอปเป็นโปรเจกต์นอก SDK</td><td>แอปเป็นของผู้เขียน (ปิดได้) ส่วน SDK และ store เป็นของกลาง เหมือน Flutter กับแอป Flutter</td><td>SDK ต้องอยู่ในเครื่อง (PATH) ทุกเครื่องที่ build</td></tr>
+<tr><td>store deploy ด้วย AWS CLI script ไม่ใช้ IaC</td><td>ไม่ต้องติดตั้งอะไรเพิ่ม อ่านง่าย รันซ้ำได้</td><td>ไม่มีคำสั่งลบทั้ง stack (ลบเองตามรายการใน README)</td></tr>
+<tr><td>GC หลังถอด DOM (≥ 150 node, หน้านิ่ง 600 ms)</td><td>cycle ของ wrapper ถือ layout/paint ที่ QuickJS ไม่นับ PSRAM จึงลดทุกรอบ</td><td>≈35 ms หลังเปลี่ยนจอ</td></tr>
+</table>
+</main>
+</body>
+</html>

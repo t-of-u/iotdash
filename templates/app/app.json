@@ -1,0 +1,7 @@
+{
+  "id": "{{id}}",
+  "title": "{{title}}",
+  "version": "1.0",
+  "description": "",
+  "os": { "min": "{{os}}" }
+}

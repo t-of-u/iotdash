@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>การแสดงผล — iotdash docs</title>
+<link rel="stylesheet" href="../assets/docs.css">
+<script src="../assets/nav.js" defer></script>
+</head>
+<body>
+<nav id="sidebar"></nav>
+<main>
+<div class="crumb">แกนระบบ (core)</div>
+<h1>การแสดงผล (scan-out)</h1>
+<p class="lead">วิธีที่ภาพจาก PSRAM ถูกส่งไปจอ RGB โดยไม่สะดุด, การวาดเฟรมใหม่แล้ว push เข้าไป, transition แบบ slide ที่ทำใน interrupt, และตัววัด tear ที่ใช้ตัดสินว่าจอ "นิ่ง" จริงหรือไม่
+โค้ด: <code>src/rgb_display.h/.cpp</code>, <code>src/dma_blit.h/.cpp</code>, <code>DeviceDisplay</code> ใน <code>src/main.cpp</code>, <code>Engine::render()</code> ใน <code>lib/rt/engine.cpp</code></p>
+<div id="toc"></div>
+
+<h2 id="principle">หลักการ: scan-out ต้องไม่สะดุด เฟรมใหม่ช้าได้</h2>
+<p>จอ RGB ไม่มีหน่วยความจำของตัวเอง ESP32-S3 ต้องส่ง pixel ให้ตลอดเวลาตาม clock ของจอ (39 ครั้งต่อวินาที) ถ้าข้อมูลมาไม่ทันแม้ไม่กี่ร้อยไมโครวินาที จะเห็นเป็นแถบภาพเพี้ยน (glitch/tear) หรือทั้งเฟรมเลื่อน ดังนั้นระบบถูกแบ่งเป็น layer ที่มีสัญญาต่างกัน:</p>
+<div class="stack">
+  <div class="layer l1"><b>Layer 1: Scan-out (kernel)</b><span>hardware + interrupt บน core 1 ส่งภาพจาก page buffer ไปจอ ห้ามสะดุดเด็ดขาด วัดด้วย tear ซึ่งต้องเป็น 0</span></div>
+  <div class="layer l2"><b>Layer 2: Frame create → push (kernel)</b><span>engine วาดลง back buffer ผ่าน blitter แล้ว present ช้าได้ (เฟรมตก) แต่ห้ามแย่ง bus จาก layer 1</span></div>
+  <div class="layer l3"><b>Layer 3: Touch</b><span>ดู <a href="input.html">Touch และ input</a></span></div>
+  <div class="layer l4"><b>Layer 4: App process</b><span>ดู <a href="js-runtime.html">JavaScript runtime</a></span></div>
+</div>
+
+<h2 id="pipeline">เส้นทางของ pixel</h2>
+<div class="flow">
+  <div class="box">Engine paint<br><small>CPU วาดลง band ใน SRAM</small></div><span class="arrow">→</span>
+  <div class="box">Band blitter (GDMA)<br><small>SRAM → back page (PSRAM)</small></div><span class="arrow">→</span>
+  <div class="box">present()<br><small>latch ที่ต้นเฟรม</small></div><span class="arrow">→</span>
+  <div class="box">Fill DMA (GDMA)<br><small>front page → bounce buffer (SRAM)</small></div><span class="arrow">→</span>
+  <div class="box">LCD DMA<br><small>bounce → LCD_CAM → จอ</small></div>
+</div>
+<table>
+<tr><th>Buffer</th><th>อยู่ที่</th><th>ขนาด</th><th>หน้าที่</th></tr>
+<tr><td>Page buffer × 2 (<code>RGB_PAGES</code>)</td><td>PSRAM, align 64</td><td>750 KB ต่อหน้า (800×480×2)</td><td>front = กำลังแสดง, back = กำลังวาด</td></tr>
+<tr><td>Bounce buffer × 2</td><td>SRAM ภายใน</td><td>12 แถว × 800 px ≈ 19 KB ต่อตัว (<code>kBounceRows</code>, เดิม 16 แถว / 25 KB ก่อนมี radio)</td><td>driver ส่งตัวหนึ่งไปจอ ขณะที่อีกตัวถูกเติม</td></tr>
+<tr><td>Band × 2 (blitter)</td><td>SRAM ภายใน</td><td>16 KB ต่อตัว (สูงสุด 64 แถว)</td><td>CPU วาดลง band หนึ่ง ขณะที่ DMA คัดลอกอีก band ไป PSRAM</td></tr>
+</table>
+
+<h2 id="budget">Bounce buffer และงบเวลา</h2>
+<p>driver <code>esp_lcd</code> ตั้งเป็น <code>no_fb</code> (ไม่มี frame buffer ของ driver) และ <code>bounce_buffer_size_px = 800 × 12</code> ทุกครั้งที่ bounce buffer หนึ่งถูกส่งหมด driver เรียก <code>onBounceEmpty()</code> (ISR ใน IRAM บน core 1) ให้เราเติมแถวถัดไป</p>
+<p>interrupt ของจอ (และของ DMA ที่เติม bounce buffer) อยู่ core 1 (<code>kLcdIsrCore</code> ใน <code>rgb_display.cpp</code>) เพราะ Wi-Fi และ Bluetooth ทำงานบน core 0 และปิด interrupt ของ core นั้นได้นานหลาย ms: วัดตอนใช้ แอปตาชั่ง ครบ flow ขณะต่อ Wi-Fi และตาชั่ง interrupt บน core 0 มาช้าสุด 6.6 ms (งบ ~615 µs) ได้ <code>late</code> 10 และ tear 25 ครั้ง (จอกระพริบ/ภาพกระโดดชั่วขณะ) ย้ายมา core 1 แล้ว <code>late</code> 0 และ tear 7 ครั้ง ซึ่งเหลือเฉพาะช่วงเปิดหน้า (อ่าน flash)</p>
+<div class="facts">
+  <div class="fact"><div class="v">~615 µs</div><div class="k">งบต่อ bounce buffer = 12 แถว × 820 clock / 16 MHz</div></div>
+  <div class="fact"><div class="v">~80 µs</div><div class="k">เวลาที่ fill DMA ใช้เติม 19 KB</div></div>
+  <div class="fact"><div class="v">~31 MB/s</div><div class="k">bandwidth ของ PSRAM ที่ scan-out ใช้ตลอดเวลา</div></div>
+  <div class="fact"><div class="v">40 ครั้ง/เฟรม</div><div class="k">480 / 12 แถว</div></div>
+</div>
+<p>ISR เติม buffer ด้วย <b>fill DMA</b> (GDMA แบบ memory-to-memory) ไม่ใช่ memcpy ของ CPU: DMA ไม่ผ่าน cache, ไม่บล็อก CPU และใช้ bus สั้นกว่า ถ้าการเติมรอบก่อนยังไม่เสร็จ ISR จะรอได้สูงสุด 250 µs ก่อนถอยไปใช้ CPU copy (นับใน <code>dmafb</code>)</p>
+
+<h3 id="priorities">Priority ของ GDMA</h3>
+<table>
+<tr><th>Channel</th><th>Priority</th><th>เหตุผล</th></tr>
+<tr><td>LCD (bounce → จอ, peri_sel = 5 LCD_CAM)</td><td>5 (สูงสุด)</td><td>ห้ามรอ channel อื่น: ถ้าปลาย bounce buffer เลย VSYNC ไป driver จะนับขาดหนึ่งตัวแล้ว restart เติมผิด buffer</td></tr>
+<tr><td>Fill (page → bounce)</td><td>4</td><td>ต้องเสร็จก่อน buffer ถัดไปขึ้นจอ</td></tr>
+<tr><td>Band blitter (SRAM → page)</td><td>0</td><td>งานที่รอได้ และรอช่องว่างของ bus อยู่แล้ว (<code>waitBusWindow</code>)</td></tr>
+</table>
+<p>driver ไม่เปิด API ให้ตั้ง priority ของ channel LCD โค้ดจึงหา channel จาก <code>GDMA.channel[i].out.peri_sel.sel == 5</code> แล้วตั้ง <code>tx_pri</code> ตรงๆ หลังสร้าง panel</p>
+
+<h2 id="pages">Page buffer, present และ latch</h2>
+<ul>
+  <li><code>back()</code> คือ buffer ที่เก่าที่สุด (จะถูกวาดต่อไป) <code>front()</code> คือเฟรมล่าสุดที่ present แล้ว</li>
+  <li><code>present()</code> ใส่ back เป็น pending แล้วคืนทันที ISR จะ <b>latch</b> สลับเป็นหน้าที่แสดงเมื่อเริ่มเฟรมถัดไป (<code>pos_px == 0</code>) จึงไม่มี tearing ระหว่างเฟรม</li>
+  <li><code>waitPresented()</code> รอจน back ไม่ได้อยู่บนจอและไม่ได้รอ latch (มี 2 buffer: ต้องรอการสลับ)</li>
+  <li>เลือก 2 buffer แทน 3 เพราะ PSRAM ต้องเผื่อให้ font ที่ถูกคัดลอกเข้า RAM (ดู <a href="memory-storage.html">หน่วยความจำ</a>) ข้อเสีย: เฟรมที่วาดนานเกินรอบจอเล็กน้อยจะเสียหนึ่งรอบ (~25 ms) เปิด 3 buffer ได้ด้วย build flag <code>-DRGB_PAGES=3</code> (จะใช้จริงเมื่อ PSRAM ว่างพอ: 750 KB + 1.5 MB)</li>
+</ul>
+
+<h3 id="damage">Damage และประวัติของ buffer</h3>
+<p>engine วาดเฉพาะส่วนที่เปลี่ยน (damage) แต่ back buffer เก่ากว่าเฟรมปัจจุบัน <code>bufferCount() - 1</code> เฟรม ดังนั้นทุกเฟรมต้องวาด damage ของเฟรมนี้ <b>รวมกับ</b> damage ของเฟรมก่อนหน้า (<code>damageHistory_</code>, <code>prevDamage_</code>) ไม่เช่นนั้นจะเห็นภาพเก่ากระพริบ</p>
+<ul>
+  <li>สี่เหลี่ยม damage ถูก align แนวนอนทีละ 32 px (<code>DmaBlitter::ALIGN_PX</code>, 64 byte = 1 cache line/burst) clip กับจอ แล้ว merge ตัวที่ซ้อนกัน (เผื่อ 2 px) ถ้าเกิน 12 ชิ้นจะรวมเป็นกรอบเดียว</li>
+  <li>หลัง transition ทุก buffer ถือว่าเก่าทั้งจอ</li>
+  <li>ตรวจความถูกต้องได้ใน simulator ด้วย <code>IOTDASH_DAMAGECHECK=1</code> ซึ่งเทียบทุกเฟรมกับการวาดใหม่ทั้งจอ (ดู <a href="../tools/simulator.html">Simulator</a>)</li>
+</ul>
+
+<h2 id="blitter">Band blitter และ bus window</h2>
+<p>ถ้า CPU เขียน PSRAM ตรงๆ cache จะอ่าน cache line ทั้งเส้นจาก PSRAM ก่อน traffic จึงประมาณ 2 เท่าของขนาดภาพ และแย่ง bus กับ scan-out <code>DmaBlitter</code> จึงให้ CPU วาดลง band ใน SRAM แล้วให้ DMA เขียนออกไป PSRAM อย่างเดียว ขณะ DMA คัดลอก band หนึ่ง CPU วาด band ถัดไป</p>
+<ul>
+  <li>ก่อนเริ่มแต่ละ band เรียก <code>RgbDisplay::waitBusWindow(bytes/100 + 20 µs)</code>: รอจนการเติม bounce buffer เสร็จและเหลือเวลาพอก่อนการเติมครั้งถัดไป (margin 60 µs) ระหว่าง slide คืนทันที และไม่รอเกิน 2 period</li>
+  <li>จำกัดอัตราเขียนเฉลี่ย 40 MB/s (<code>setMaxRate</code>) เพื่อกระจายงานวาดใหญ่ไม่ให้ระเบิดในช่วงเดียว</li>
+  <li><code>gBlitActive</code> บอก ISR ว่า blitter กำลังเขียนอยู่ (นับใน <code>tears … with blit</code>)</li>
+</ul>
+
+<h3 id="dual-core">วาดสองคอร์</h3>
+<p><code>DeviceDisplay::render()</code> แบ่งแต่ละ band เป็นซ้าย/ขวา: core 1 (engine) วาดซ้าย task <code>paint1</code> (core 0, priority 5, stack 9 KB) วาดขวาพร้อมกัน จุดแบ่งปรับตามเวลาที่วัดได้จริงของแต่ละแถบจอ (48 แถบ, เลื่อนครึ่งหนึ่งของความต่าง) ใช้เมื่อ band กว้าง ≥ 128 px และมี ≥ 4096 px การวาดอ่าน document อย่างเดียว (cache ที่สร้างแบบ lazy มี lock ของตัวเอง)</p>
+
+<h2 id="slide">Transition แบบ slide ใน ISR</h2>
+<p>slide (left/right/up/down, 320 ms) ไม่ได้วาดภาพกลางทางเลย ISR ประกอบแต่ละแถวของ bounce buffer จากหน้าเก่าและหน้าใหม่ที่ offset ต่างกันเอง (ease-out cubic) จึงไม่ต้องเขียน PSRAM เพิ่มและวิ่งได้ 39 Hz เต็ม</p>
+<ol>
+  <li>engine วาดหน้าใหม่ทั้งหน้าลง back แล้วเรียก <code>transition()</code> → <code>RgbDisplay::slide()</code></li>
+  <li><code>slide()</code> รอ latch ล่าสุด, invalidate cache ของ page (เพราะ DMA เขียน แต่ ISR อ่านด้วย CPU) แล้วตั้ง pending transition</li>
+  <li>ISR เริ่ม transition ที่ต้นเฟรมที่ latch และเลื่อน offset ทุกเฟรม เมื่อครบจะแสดงหน้าใหม่และปล่อย <code>doneSem_</code></li>
+  <li>ระหว่าง slide ไม่ใช้ fill DMA (CPU ประกอบแถว) และไม่นับ tear</li>
+</ol>
+<p>Fade (เข้า home ตอน boot) ไม่ใช้กลไกนี้ แต่วาดตามปกติ</p>
+
+<h2 id="tear">ตัววัด tear</h2>
+<div class="note"><p><b>Tear</b> = ทุกครั้งที่ panel เริ่มส่ง bounce buffer ที่การเติมยังไม่เสร็จ ตรวจจาก owner bit ของ descriptor ตัวสุดท้ายของการเติมรอบนั้น (<code>gdma_link_get_owner(frxList_[s], fillEnd_[s])</code> ยังเป็น DMA) ซึ่งตรงกับสิ่งที่ตาเห็นเป็นแถบเพี้ยน เป้าหมายคือ <b>0 ในทุกสถานการณ์</b></p></div>
+<p>ตัววัดเดิม <code>late</code> (ISR ใช้เวลานานกว่างบ) ใช้ไม่ได้ เพราะเมื่อใช้ DMA เติม ISR จบเร็วเสมอแม้ข้อมูลจะยังมาไม่ถึง และ <code>late = 0</code> ทั้งที่ยังเห็น glitch</p>
+<table>
+<tr><th>ค่า</th><th>ความหมาย</th></tr>
+<tr><td><code>tears N</code></td><td>จำนวน tear ตั้งแต่ reset stats</td></tr>
+<tr><td><code>(idle a load b …)</code></td><td>tear แยกตาม <code>rt::gPhase</code> ตอนเกิด: idle, load, script, os, layout, paint, io, input บอกได้ว่า engine ทำอะไรอยู่</td></tr>
+<tr><td><code>with blit</code></td><td>blitter กำลังเขียน PSRAM อยู่ด้วย</td></tr>
+<tr><td><code>oldest refill</code></td><td>อายุของการเติมที่ยังไม่เสร็จตอนจอต้องใช้ (µs)</td></tr>
+<tr><td><code>isr core / late max / &gt;200us / back-to-back</code></td><td>interrupt มาช้าแค่ไหน (เทียบกับ period) และมาติดกันผิดปกติหรือไม่</td></tr>
+<tr><td><code>dma isr max</code></td><td>เวลาที่ ISR ใช้มากที่สุดเมื่อเติมด้วย DMA</td></tr>
+</table>
+<p>นอกจากตัวนับยังมี <b>timeline</b>: ring buffer ของ event (bounce, vsync, phase, busy) ที่ "แช่แข็ง" ตัวเองเมื่อเกิด tear ครั้งแรกหลัง <code>Tarm</code> แล้วพิมพ์ด้วย <code>T</code> ใช้ดูลำดับเหตุการณ์รอบ tear ทีละไมโครวินาที ดู <a href="../tools/debugging.html">การวัดผลและ debug</a></p>
+
+<h2 id="causes">สาเหตุของ glitch ที่พบและวิธีแก้</h2>
+<h3>1. อ่าน flash ระหว่างวาด</h3>
+<p>หลังย้ายระบบไปอยู่ใน flash, font, รูป และไฟล์หน้าเว็บถูกอ่านจาก flash ที่ map ไว้ (XIP/mmap) ระหว่างวาด flash กับ PSRAM ใช้ bus เดียวกัน: ทดสอบให้ CPU อ่าน flash ต่อเนื่อง 2 วินาที (คำสั่ง <code>F</code>) จอเติมไม่ทัน 1170 ครั้ง ขณะที่อ่าน PSRAM แบบเดียวกัน (<code>Q</code>) ได้ 0</p>
+<p><b>แก้:</b> เลิก map flash ทั้งหมด อ่านผ่าน <code>ImageSource</code> ทีละ 4 KB + พัก 150 µs, คัดลอก font table และ glyph ที่ใช้จริงเข้า PSRAM, คัดลอกรูปเข้า RAM ตอนโหลด รายละเอียดใน <a href="memory-storage.html#no-flash">หน่วยความจำ</a></p>
+
+<h3 id="restart-bug">2. Race ใน driver: <code>RESTART_IN_VSYNC</code></h3>
+<p>Arduino เปิด <code>CONFIG_LCD_RGB_RESTART_IN_VSYNC</code> เป็นค่าเริ่มต้น driver จะ restart DMA ของจอทุก VSYNC แต่ไม่ reset ตัวนับ bounce buffer ของตัวเอง ถ้ามี EOF ที่หลงมาหลัง restart จะเติมผิด buffer ทั้งเฟรมเลื่อนไปหนึ่ง bounce buffer (16 แถวในตอนนั้น, ภาพกระโดด) ซ้ำด้วย channel ของจอได้ priority ต่ำกว่า DMA ตัวอื่น ทำให้ปลาย buffer เลย VSYNC บ่อยขึ้น</p>
+<p><b>แก้:</b> ปิดค่านี้ใน <code>platformio.ini</code> (default ของ IDF จะ restart เฉพาะเมื่อเฟรมนั้นเสีย EOF ไป) และตั้ง priority ของ channel LCD เป็นสูงสุด ผล: tear จาก 12–14 ครั้งต่อ 3 วินาทีตอนวาดหนักเหลือ 0</p>
+
+<h3>3. Blitter ชนกับการเติม bounce buffer</h3>
+<p><b>แก้:</b> <code>waitBusWindow()</code> ก่อนแต่ละ band และ priority 0 ของ blitter</p>
+
+<h3>4. การคัดลอก image และการอ่านไฟล์เป็นก้อนใหญ่</h3>
+<p>การคัดลอก <code>app.idb</code> ลง slot ครั้งละ 64 KB จาก LittleFS เคยทำให้จอกระตุกตอนเปิดแอป <b>แก้:</b> อ่านทีละ 4 KB พัก 150 µs (<code>gIoPause</code> สำหรับ <code>Os::readFile</code> และการอ่านในแอปด้วย)</p>
+
+<h2 id="results">ผลที่วัดได้</h2>
+<table>
+<tr><th>สถานการณ์</th><th>tear</th></tr>
+<tr><td>boot, เปิดแอป, พิมพ์, ปัดแถบล่าง, เปลี่ยนหน้า, back/home พร้อม modal, Settings ทุกแท็บ, dark mode</td><td>0</td></tr>
+<tr><td>Stress วาดเต็มจอ 15 วินาที + เปลี่ยนหน้า 10 ครั้ง</td><td>0</td></tr>
+<tr><td>Calculator กดปุ่มต่อเนื่อง ทุกหน้า</td><td>0</td></tr>
+</table>
+<div class="warn"><p>ข้อแลกเปลี่ยน: เมื่อเฟรมใช้เวลาวาดเกิน ~25 ms จะเห็นเป็นเฟรมตก (กระตุกเชิงเวลา) ไม่ใช่ภาพแตก ซึ่งเป็นพฤติกรรมที่ตั้งใจ ถ้าเพิ่ม PCLK (refresh สูงขึ้น) bandwidth ของ scan-out จะเพิ่มตามและงบต่อ bounce buffer จะลด ต้องวัด tear ใหม่</p></div>
+</main>
+</body>
+</html>

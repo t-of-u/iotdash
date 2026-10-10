@@ -1,0 +1,13 @@
+# Local development / tests. The Lambda itself gets the runtime deps from the
+# layer (layers/iotstore.txt) and boto3 from the Lambda Python runtime.
+
+# ── Lambda layer: layers/iotstore.txt ─────────────────
+-r layers/iotstore.txt
+
+# ── Provided by the Lambda runtime ────────────────────
+boto3
+
+# ── Local runner + tests: DynamoDB and S3 in-process (moto) ──
+moto[dynamodb,s3]
+flask
+pytest

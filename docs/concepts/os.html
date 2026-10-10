@@ -1,0 +1,243 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>iotdash OS — iotdash docs</title>
+<link rel="stylesheet" href="../assets/docs.css">
+<script src="../assets/nav.js" defer></script>
+</head>
+<body>
+<nav id="sidebar"></nav>
+<main>
+<div class="crumb">แนวคิดหลัก</div>
+<h1>iotdash OS</h1>
+<p class="lead">ชั้น OS ที่วางอยู่บน rendering engine ทำหน้าที่ boot ระบบจาก storage, แสดง home screen, เปิดปิดแอปทีละตัว, จัดการ navigation stack, แสดง system UI (แถบล่าง, dialog, overlay ตอนเปิดแอป), registry, Wi-Fi/Bluetooth และ factory reset
+โค้ดหลักอยู่ที่ <code>lib/rt/os.h</code>, <code>lib/rt/os.cpp</code>, <code>lib/rt/os_net.cpp</code> ส่วนหน้าจอระบบอยู่ใน <code>os/core/</code></p>
+<div id="toc"></div>
+
+<h2 id="overview">ภาพรวม</h2>
+<div class="facts">
+  <div class="fact"><div class="v">0.1.0</div><div class="k"><code>Os::kVersion</code></div></div>
+  <div class="fact"><div class="v">1 แอป</div><div class="k">ทำงานพร้อมกันได้ครั้งละหนึ่งแอป</div></div>
+  <div class="fact"><div class="v">3 สถานะ</div><div class="k">BOOT_CARD → BOOT_IMAGE → RUNNING</div></div>
+  <div class="fact"><div class="v">3 × 1.5 MB</div><div class="k">flash slot สำหรับ image ของแอป</div></div>
+</div>
+<p>OS แบ่งเป็นสองส่วนที่อยู่คนละที่กัน</p>
+<table>
+<tr><th>ส่วน</th><th>อยู่ที่ไหน</th><th>มีอะไร</th></tr>
+<tr><td>Firmware (C++)</td><td>flash ของบอร์ด (<code>app0</code>)</td><td>class <code>rt::Os</code>: boot, launch, navigate, memory.json, registry, system UI, gesture; boot screen (<code>os/core/boot/boot.html</code>) ถูก compile ฝังไว้ใน firmware</td></tr>
+<tr><td>System image</td><td><code>/system/os.idb</code> บน storage, ถูกคัดลอกลง partition <code>sys</code> ตอน boot</td><td>home screen, shell UI (<code>shell.html/.css</code>), theme, <code>os.js</code> (script API), core apps (Settings), font atlas ของระบบ, default icon, <code>private/secrets.json</code> (Wi-Fi ที่ติดมากับระบบ ถ้ามี)</td></tr>
+</table>
+<p>การแยกแบบนี้ทำให้แก้หน้าตา home, settings หรือ <code>os.js</code> ได้โดย deploy system image ใหม่ (<code>tools/iotdash.py os deploy</code>) โดยไม่ต้อง flash firmware ใหม่</p>
+
+<h2 id="boot">ลำดับการ boot</h2>
+<div class="flow">
+  <div class="box">firmware start</div><span class="arrow">→</span>
+  <div class="box"><b>BOOT_CARD</b><br><small>mount storage, อ่าน os.json</small></div><span class="arrow">→</span>
+  <div class="box"><b>BOOT_IMAGE</b><br><small>คัดลอก os.idb → flash <code>sys</code></small></div><span class="arrow">→</span>
+  <div class="box"><b>startSystem</b><br><small>mount <code>system/</code>, registry</small></div><span class="arrow">→</span>
+  <div class="box"><b>RUNNING</b><br><small>home (fade)</small></div>
+</div>
+<ol>
+  <li><b>Boot screen</b>: <code>Os::boot()</code> mount boot image ที่ฝังใน firmware ไว้ที่ prefix <code>boot/</code> แล้วเปิด <code>boot/boot.html</code> ทันที หน้านี้มีฟังก์ชัน <code>bootStatus({text, progress, error, canFormat, version})</code> ที่ OS เรียกทุกครั้งที่สถานะเปลี่ยน (boot.html อัปเดต DOM เฉพาะค่าที่เปลี่ยนจริง เพื่อไม่ให้ต้อง restyle/paint ทุก tick)</li>
+  <li><b>BOOT_CARD</b>: <code>bootStep()</code> เรียก <code>Platform::sdMount()</code> ถ้าไม่สำเร็จจะลองใหม่ทุก 2 วินาที เมื่อ mount ได้จะอ่าน <code>/system/os.json</code> เพื่อเอา <code>hash</code> ของ system image แล้วเริ่ม <code>loadImage("system", "/system/os.idb", hash)</code></li>
+  <li><b>BOOT_IMAGE</b>: เรียก <code>step()</code> ของ image loader ทุก tick (คัดลอกทีละ 64 KB) progress bar แสดงช่วง 10% ถึง 95% ถ้า hash ตรงกับที่อยู่ใน slot แล้วจะข้ามการคัดลอกไปเลย</li>
+  <li><b>startSystem</b>: mount image ที่ prefix <code>system/</code> (อ่านผ่าน <code>ImageSource</code> ไม่ map flash), ตั้ง system CSS จาก <code>system/shell/shell.css</code>, โหลด registry และ apply (dark mode), เริ่ม Wi-Fi ตาม registry และ <code>secrets.json</code> (<code>netStart</code>, ดู <a href="../core/connectivity.html">Wi-Fi และ Bluetooth</a>), สร้างโฟลเดอร์ <code>/system/data</code> และ <code>/applications</code> แล้วเข้า home ด้วย transition แบบ fade</li>
+</ol>
+
+<h3>ข้อความบน boot screen</h3>
+<table>
+<tr><th>ข้อความ</th><th>สาเหตุ</th><th>ลองใหม่ทุก</th><th>แก้อย่างไร</th></tr>
+<tr><td>Insert an SD card</td><td>mount ไม่ได้ (ไม่มีการ์ด และ flash file system ใช้ไม่ได้)</td><td>2 วินาที</td><td>ใส่การ์ด หรือดู <a href="../core/memory-storage.html">storage fallback</a></td></tr>
+<tr><td>The SD card has no file system</td><td>error มีคำว่า "format" (การ์ดไม่มี FAT)</td><td>2 วินาที</td><td>กดปุ่ม <b>Format SD card</b> ที่ boot screen จะแสดงขึ้นมา (<code>canFormat</code>) หรือใช้ <code>os format</code></td></tr>
+<tr><td>The system is not installed on this card</td><td>ไม่มี <code>/system/os.json</code></td><td>3 วินาที</td><td><code>tools/iotdash.py os deploy</code></td></tr>
+<tr><td>Loading the system</td><td>กำลังคัดลอก/ตรวจ image</td><td>–</td><td>รอ</td></tr>
+<tr><td>Cannot load the system</td><td>คัดลอกลง flash ไม่สำเร็จ (อ่านการ์ดพัง, เขียน flash ไม่ได้, image ใหญ่เกิน 2.25 MB)</td><td>3 วินาที</td><td>ดูข้อความ error บรรทัดล่าง, deploy ใหม่</td></tr>
+<tr><td>The system image is damaged</td><td>คัดลอกแล้วแต่ index ของ bundle อ่านไม่ได้</td><td>5 วินาที</td><td>deploy ใหม่</td></tr>
+</table>
+<div class="note"><p>ระหว่าง boot ปุ่ม Format บน boot screen เรียก <code>os.sd.format()</code> ได้ เพราะก่อนสถานะ RUNNING ทุกหน้าถือว่า privileged (<code>Os::privileged()</code> คืน true เมื่อ <code>state_ != RUNNING</code>)</p></div>
+
+<h3>Reload ระบบโดยไม่ reboot</h3>
+<p>หลัง <code>os deploy</code> เครื่องมือจะส่ง dev-link frame <code>OS_RELOAD</code> ให้บอร์ดเรียก <code>Os::reloadSystem()</code>: flush memory.json, ปิด JS session, unmount <code>app/</code> และ <code>system/</code> แล้วเริ่ม boot ใหม่จาก boot image (ไม่ต้อง reset บอร์ด) เนื่องจาก hash เปลี่ยน image ใหม่จะถูกคัดลอกลง <code>sys</code></p>
+
+<h2 id="images">System image และ app image ใน flash</h2>
+<p>ไม่มีการอ่าน image จากการ์ดตรงๆ ตอนแสดงผล ทุก image จะถูกคัดลอกลง partition ใน flash ก่อน แล้วอ่านผ่าน driver ตามต้องการ (ดูเหตุผลใน <a href="../core/memory-storage.html">หน่วยความจำและ storage</a>)</p>
+<table>
+<tr><th>Image</th><th>Partition</th><th>ขนาด</th><th>การเลือก slot</th></tr>
+<tr><td>System (<code>os.idb</code>)</td><td><code>sys</code> (subtype 0x40)</td><td>2.25 MB (0x240000)</td><td>slot เดียว</td></tr>
+<tr><td>แอป (<code>app.idb</code>)</td><td><code>slots</code> (subtype 0x41)</td><td>3 slot × 1.5 MB</td><td>slot ที่มี image นี้อยู่แล้ว → slot ที่เคยเป็นของแอปนี้ → slot ว่าง → slot ที่เก่าที่สุด (ตาม <code>stamp</code>)</td></tr>
+</table>
+<p>แต่ละ slot มี header 4 KB (<code>"ISL1"</code>, size, stamp, key, hash) ถ้า key และ hash ตรงกับที่ขอ จะใช้ได้ทันทีโดยไม่คัดลอก (เปิดแอปเดิมซ้ำเร็วมาก) ตอนคัดลอกจะลบ header ก่อนเป็นอย่างแรก และเขียน header เป็นอย่างสุดท้าย ดังนั้นการคัดลอกที่ถูกตัดกลางคัน (ไฟดับ, reset) จะไม่ถูกนับเป็น image ที่สมบูรณ์ รายละเอียด format อยู่ใน <a href="../reference/file-formats.html#isl1">Format ไฟล์</a></p>
+<p>การอ่านจาก storage ตอนคัดลอกทำทีละ 4 KB และพัก 150 µs ระหว่างแต่ละครั้ง เพราะ flash file system ใช้ bus เดียวกับที่ panel ใช้เติม bounce buffer ถ้าอ่านรวดเดียว 64 KB จอจะ glitch</p>
+
+<h2 id="apps">แอป: system app และแอปที่ติดตั้ง</h2>
+<table>
+<tr><th></th><th>System app (เช่น Settings)</th><th>แอปที่ติดตั้ง (เช่น Calculator)</th></tr>
+<tr><td>ต้นฉบับ</td><td><code>os/core/apps/&lt;id&gt;/</code> ใน SDK</td><td>โปรเจกต์ของแอป ที่ไหนก็ได้ (<code>iotdash create</code>)</td></tr>
+<tr><td>อยู่ที่ไหนบนอุปกรณ์</td><td>ใน system image ที่ <code>system/apps/&lt;id&gt;/</code></td><td><code>/applications/&lt;id&gt;/app.idb</code> → คัดลอกลง slot</td></tr>
+<tr><td>Root prefix ตอน mount</td><td><code>system/apps/&lt;id&gt;/</code></td><td><code>app/</code></td></tr>
+<tr><td>ข้อมูลของแอป (<code>dir</code>)</td><td><code>/system</code> (ใช้ memory.json และ data/ ของระบบ)</td><td><code>/applications/&lt;id&gt;</code></td></tr>
+<tr><td>Icon</td><td><code>icon.img</code> ใน image หรือ default icon</td><td><code>sd:/applications/&lt;id&gt;/icon.img</code> หรือ <code>/system/assets/default-icon.img</code></td></tr>
+<tr><td>Privileged</td><td>ใช่: เขียน registry, format, uninstall ได้</td><td>ไม่ใช่</td></tr>
+<tr><td>ติดตั้ง/ลบ</td><td>มากับ system image</td><td>แอป <a href="#store">Apps</a> (จาก iotstore), <code>iotdash install</code> / <code>uninstall</code> (USB), หรือปุ่ม Remove ใน Settings</td></tr>
+</table>
+<p><code>Os::apps()</code> สร้างรายการแอปจาก (1) ไฟล์ <code>system/apps/*/app.json</code> ใน bundle และ (2) โฟลเดอร์ใน <code>/applications</code> ที่มี <code>app.json</code> (เรียงตามชื่อ, ข้ามชื่อที่ขึ้นต้นด้วยจุด เช่น <code>._*</code> ของ macOS)</p>
+
+<h2 id="lifecycle">วงจรชีวิตของแอป</h2>
+<h3>Launch</h3>
+<ol>
+  <li>Home เรียก <code>os.launch(id)</code> → <code>Os::launch()</code> (ปฏิเสธถ้าระบบยังไม่ RUNNING หรือมีแอปอื่นกำลังเปิดอยู่)</li>
+  <li><b>System app</b>: ใส่งานลง <code>deferred_</code> (ไม่ทำในระหว่างที่ script กำลังรัน) ให้ปล่อย app image เดิม, unmount <code>app/</code> แล้ว <code>enter(app, TR_SLIDE_UP)</code></li>
+  <li><b>แอปที่ติดตั้ง</b>: เริ่ม <code>loadImage("app:&lt;id&gt;", app.idb, hash)</code> แล้วแสดง launch overlay (class <code>launching</code>) ที่มีชื่อแอปและ progress bar ซึ่ง <code>tick()</code> ปรับความกว้างตาม <code>step()</code></li>
+  <li>เมื่อโหลดครบ: ปล่อย image เดิม, mount ที่ <code>app/</code> แล้ว <code>enter()</code> ถ้าล้มเหลวจะแสดง dialog "Cannot open the app: …" หรือ "The app image is damaged; install it again."</li>
+</ol>
+<h3><code>enter(app, transition)</code></h3>
+<ol>
+  <li>ถ้ามี dialog ค้างอยู่ จะตอบ cancel ให้ก่อน (ให้ <code>confirm()</code> ของ JS resolve ในขณะที่ runtime ยังอยู่)</li>
+  <li><code>flush()</code> memory.json ของแอปเดิม</li>
+  <li><code>js_.endSession()</code>: script, timer และ background process ของแอปเดิมจบทั้งหมด</li>
+  <li>ตั้งแอปใหม่เป็นแอปปัจจุบัน, ล้าง navigation stack, โหลด <code>memory.json</code> ของแอปใหม่, สร้างโฟลเดอร์ <code>data/</code></li>
+  <li>เปิด <code>&lt;root&gt;main.html</code> ด้วย transition ที่กำหนด</li>
+</ol>
+
+<h3>Navigation stack</h3>
+<p>แอปหนึ่งตัวมีได้หลายหน้า หน้าแรกคือ <code>main.html</code> ส่วนหน้าอื่นต้องอยู่ใต้ <code>pages/</code> แต่ละหน้าเปิดใน JS context ใหม่ (realm ใหม่) แต่ background process แบบ APP ยังทำงานต่อ</p>
+<table>
+<tr><th>การกระทำ</th><th>ผล</th><th>Transition</th></tr>
+<tr><td><code>navigate("scientific/main.html")</code></td><td>push <code>&lt;root&gt;pages/scientific/main.html</code> (ต้องอยู่ใต้ <code>pages/</code> และมีอยู่ใน bundle)</td><td>slide left</td></tr>
+<tr><td><code>&lt;a href="…"&gt;</code> ที่ชี้ไปหน้าในแอปเดียวกัน</td><td><code>linkActivated()</code> push หน้านั้น (ตัด <code>?</code>/<code>#</code> ออก)</td><td>slide left</td></tr>
+<tr><td><code>navigate(-1)</code>, <code>history.back()</code>, ปุ่ม back</td><td>pop กลับหน้าก่อนหน้า</td><td>slide right</td></tr>
+<tr><td>back บนหน้าแรกของแอป</td><td>ถามว่า "Close the app and go to the home screen?"</td><td>–</td></tr>
+<tr><td>ปุ่ม home</td><td>ถามก่อนเสมอเมื่ออยู่ในแอป (<code>requestHome</code>)</td><td>slide down</td></tr>
+<tr><td><code>os.home(false)</code></td><td>ปิดแอปทันทีโดยไม่ถาม</td><td>slide down</td></tr>
+</table>
+<div class="warn"><p>เมื่อย้อนกลับ (<code>navigateBack</code>) หน้าก่อนหน้าจะถูก<b>เปิดใหม่</b>ใน context ใหม่ ไม่ได้กู้ DOM เดิมกลับมา สถานะที่ต้องการให้คงอยู่ระหว่างหน้าต้องเก็บใน <code>localStorage</code>, ไฟล์ หรือ APP process</p></div>
+
+<h3>ทำไมค่าในแอปยังอยู่หลังกด home</h3>
+<p>การกด home ปิดแอปจริง (JS session จบ, image ถูกปล่อย) แต่ <code>localStorage</code> ของแอปคือไฟล์ <code>memory.json</code> บน storage ซึ่งเป็นข้อมูลถาวร แอปที่เขียนสถานะลง localStorage (เช่น Calculator เก็บค่าบนจอ) จะได้ค่าเดิมคืนเมื่อเปิดใหม่ ส่วน <code>sessionStorage</code> ปัจจุบันเป็นของแต่ละหน้าและหายเมื่อเปลี่ยนหน้า ดูข้อเสนอการเปลี่ยนแปลงใน <a href="../project/known-issues.html">ข้อจำกัดและงานที่ค้าง</a></p>
+
+<h2 id="shell">System UI (shell)</h2>
+<p>ทุกครั้งที่ document ใหม่พร้อม (<code>documentReady</code>) OS จะ parse <code>system/shell/shell.html</code> แล้ว append เข้าไปใน <code>&lt;html&gt;</code> ของหน้านั้น node ทั้งหมดมี flag <code>NF_INTERNAL</code> (script ของแอปมองไม่เห็นและแก้ไม่ได้) ข้อความใน dialog และ launch overlay ถูกใส่กลับทุกครั้ง จึงยังอยู่แม้หน้าข้างใต้จะเปลี่ยน</p>
+<table>
+<tr><th>องค์ประกอบ</th><th>Class บน <code>.os-shell</code></th><th>พฤติกรรม</th></tr>
+<tr><td>แถบล่าง (home, back)</td><td><code>nav-open</code></td><td>ปัดขึ้นจากขอบล่าง 18 px (<code>kEdge</code>) เกิน 24 px เพื่อแสดง; ซ่อนเองหลัง 3.5 วินาที (<code>kNavShowMs</code>) ถ้าไม่ได้แตะ; ใช้ได้เฉพาะเมื่ออยู่ในแอป (ไม่ใช่ home)</td></tr>
+<tr><td>Dialog</td><td><code>modal-open</code>, <code>no-cancel</code></td><td><code>os.confirm()</code>/<code>os.alert()</code>; จับทุก touch ไว้ขณะเปิด; แตะพื้นหลังจะปิดได้เฉพาะ alert (ไม่มีปุ่ม cancel)</td></tr>
+<tr><td>Launch overlay</td><td><code>launching</code></td><td>แสดงชื่อแอป + progress ระหว่างคัดลอก image; จับทุก touch</td></tr>
+</table>
+<p>การแตะปุ่มของ shell ใช้ attribute <code>data-os</code> (<code>home</code>, <code>back</code>, <code>ok</code>, <code>cancel</code>, <code>dismiss</code>, <code>none</code>) OS hit-test ตอน DOWN และทำ action ตอน UP เมื่อนิ้วยังอยู่บน element เดิม ถ้า OS รับ touch ไปแล้ว engine จะไม่ส่ง event นั้นให้แอป ลำดับการส่ง touch ดูได้ที่ <a href="../core/input.html">Touch และ input</a></p>
+
+<h2 id="memory">memory.json (localStorage)</h2>
+<ul>
+  <li><code>localStorage</code> ของทุกหน้าในแอปหนึ่งตัวคือ map เดียวกัน เก็บในไฟล์ <code>&lt;app.dir&gt;/memory.json</code> (system app และ home ใช้ <code>/system/memory.json</code>)</li>
+  <li>โหลดตอน <code>enter()</code>; การเขียนจะรวมกันแล้ว flush หลัง 500 ms (<code>memFlushAt_</code>) และ flush ทันทีเมื่อออกจากแอป, ก่อน format, หรือเมื่อ Os ถูกทำลาย</li>
+  <li>การ <code>setItem</code> ค่าเดิมซ้ำไม่ทำให้ไฟล์ถูกเขียน</li>
+  <li>ไม่มีขีดจำกัดขนาดที่บังคับ แต่ไฟล์ทั้งไฟล์ถูกเขียนใหม่ทุกครั้ง ควรเก็บแค่สถานะเล็กๆ ข้อมูลใหญ่ให้ใช้ <code>fs</code> ใน <code>data/</code></li>
+</ul>
+
+<h2 id="files">ไฟล์ของแอปและ sandbox</h2>
+<ul>
+  <li>แอปเข้าถึงได้เฉพาะโฟลเดอร์ <code>data/</code> ของตัวเองผ่าน <code>open()</code> และ <code>fs.*</code> path ถูก normalize (ตัด <code>.</code> และช่องว่าง) ถ้า <code>..</code> พาออกนอก <code>data/</code> จะ error "path outside the app"</li>
+  <li>ไฟล์ใน image ของแอป (เช่น <code>data.json</code> ที่ build รวมไว้) อ่านได้ด้วย <code>fetch()</code> แบบ relative URL</li>
+  <li>รูปบน storage อ่านได้เฉพาะ URL แบบ <code>sd:/…/*.img</code> (ใช้สำหรับ icon) และห้ามมี <code>..</code></li>
+  <li>Registry อ่านได้ทุกแอป (ยกเว้น key <code>secure.*</code>) แต่เขียนได้เฉพาะ privileged</li>
+  <li>ไฟล์ใต้ <code>system/private/</code> ใน system image (เช่น <code>secrets.json</code>) เปิดเป็นหน้าไม่ได้และ <code>fetch()</code> ได้ 404 มีแต่โค้ด native ของ OS ที่อ่าน</li>
+</ul>
+
+<h2 id="registry">Registry</h2>
+<p>Registry คือค่าตั้งของระบบขนาดเล็ก (JSON) เก็บเป็น blob เดียวใน Preferences namespace <code>registry</code> key <code>json</code> ของ NVS partition <code>reg</code> ใน flash ภายใน จึงไม่หายเมื่อเปลี่ยนหรือ format การ์ด (แต่ factory reset จะล้าง)</p>
+<table>
+<tr><th>Key</th><th>ค่าเริ่มต้น</th><th>ใช้ที่ไหน</th></tr>
+<tr><td><code>darkMode</code></td><td><code>false</code></td><td><code>applyRegistry()</code> เรียก <code>Engine::setDarkMode()</code> ให้ทั้งระบบ (media query <code>prefers-color-scheme</code>)</td></tr>
+<tr><td><code>clock24</code></td><td><code>true</code></td><td>นาฬิกาบน home และตัวอย่างใน Settings</td></tr>
+<tr><td><code>wifi.enabled</code></td><td><code>true</code></td><td>สวิตช์ Wi-Fi: เปิด radio และต่ออัตโนมัติตอนระบบเริ่ม</td></tr>
+<tr><td><code>bt.enabled</code></td><td><code>true</code></td><td>สวิตช์ Bluetooth: อนุญาตให้เปิดเมื่อมีคนใช้</td></tr>
+<tr><td><code>bt.devices</code></td><td>–</td><td>อุปกรณ์ BLE ที่เคยต่อ <code>[{id, name, type}]</code> ล่าสุดก่อน (สูงสุด 8)</td></tr>
+<tr><td><code>secure.wifi</code></td><td>–</td><td>เครือข่ายที่บันทึก <code>[{ssid, pass}]</code> ล่าสุดก่อน (สูงสุด 8) system เท่านั้น</td></tr>
+<tr><td><code>secure.secretsHash</code></td><td>–</td><td>hash ของ <code>secrets.json</code> ที่รวมเข้า <code>secure.wifi</code> ไปแล้ว</td></tr>
+<tr><td><code>net.probeUrl</code></td><td><code>http://connectivitycheck.gstatic.com/generate_204</code> (ไม่ได้เก็บ)</td><td>URL ตรวจอินเทอร์เน็ต</td></tr>
+</table>
+<p>ทุกครั้งที่ set/remove/clear จะบันทึกลง flash, apply, แล้วส่ง event <code>registry</code> (<code>{key, value}</code>) ไปให้ทุก listener ผ่าน <code>os.on('registry', fn)</code> หรือ <code>registry.onChange(fn)</code></p>
+<p>key ที่ขึ้นต้นด้วย <code>secure.</code> มองเห็นเฉพาะ system: แอปทั่วไป <code>registry.get</code> ได้ค่า default, <code>keys()</code>/<code>all()</code> ไม่มี key นี้ และ event ได้ value เป็น null (ค่าจริงยังถูกบันทึกทั้งหมด) Reset registry และ factory reset ล้างเครือข่ายที่บันทึกด้วย ส่วนเครือข่ายใน <code>secrets.json</code> กลับมาตอนระบบเริ่มครั้งถัดไป</p>
+
+<h2 id="privileges">สิทธิ์ (privileged)</h2>
+<p><code>Os::privileged()</code> เป็นจริงเมื่อแอปปัจจุบันเป็น system app (home, settings) หรือระบบยังไม่ RUNNING (boot screen)</p>
+<table>
+<tr><th>การกระทำ</th><th>แอปทั่วไป</th><th>System</th></tr>
+<tr><td><code>registry.get/keys/all</code></td><td>✓</td><td>✓</td></tr>
+<tr><td><code>registry.set/remove/clear</code></td><td>✗ "the registry is read-only for apps"</td><td>✓</td></tr>
+<tr><td><code>os.sd.format()</code></td><td>✗ "only the system can format the card"</td><td>✓</td></tr>
+<tr><td><code>os.uninstall(id)</code></td><td>✗ "only the system can remove apps"</td><td>✓ (ยกเว้นแอปที่กำลังรัน)</td></tr>
+<tr><td><code>os.launch</code>, <code>os.apps</code>, <code>os.home</code>, <code>navigate</code>, <code>fs</code></td><td>✓</td><td>✓</td></tr>
+<tr><td><code>os.net.*</code>, <code>os.wifi.state/scan/saved</code>, <code>os.bt</code> scan/connect/read/write/subscribe</td><td>✓</td><td>✓</td></tr>
+<tr><td><code>os.wifi.power/connect/disconnect/forget</code>, <code>os.bt.power/forget</code></td><td>✗ "only the system can change connections"</td><td>✓</td></tr>
+<tr><td>registry <code>secure.*</code></td><td>มองไม่เห็น</td><td>✓</td></tr>
+</table>
+
+<h2 id="storage">Storage: SD card หรือ flash ภายใน</h2>
+<p><code>DevicePlatform::sdMount()</code> ลอง mount SD card ก่อน (ที่ <code>/sd</code>) ถ้าไม่ได้ หรือ Preferences key <code>storage</code> = <code>flash</code> จะใช้ LittleFS บน partition <code>fs</code> (5.2 MB) ที่ <code>/flash</code> แทน ด้วย layout เดียวกันทุกอย่าง ส่วนที่เหลือของ OS ไม่รู้ว่าใช้ตัวไหน (เห็นแค่ <code>sdRoot()</code>)</p>
+<ul>
+  <li>เปลี่ยนโหมดด้วยคำสั่ง text <code>storage flash</code> หรือ <code>storage auto</code> (มีผลตอน boot ครั้งถัดไป)</li>
+  <li>Settings แสดงชนิด storage (<code>sdInfo().type</code> เป็น <code>FLASH</code> เมื่อใช้ flash ภายใน)</li>
+  <li>ช่อง SD ของบอร์ดตัวที่ใช้ทดสอบเสียที่ฮาร์ดแวร์ ตอนนี้ระบบจึงทำงานบน flash ภายใน (ดู <a href="../core/hardware.html#sd-fault">ฮาร์ดแวร์</a>)</li>
+</ul>
+
+<h2 id="factory-reset">Factory reset (Format)</h2>
+<p>ปุ่ม Format ในแท็บ SD card ของ Settings (หรือบน boot screen) เรียก <code>os.sd.format()</code> → <code>Os::sdFormat()</code>:</p>
+<ol>
+  <li>ตรวจสิทธิ์, flush memory.json แล้วตัด path ทิ้ง (จะไม่มีอะไรของการ์ดเดิมถูกเขียนกลับ)</li>
+  <li><code>Platform::sdFormat()</code>: format SD เป็น FAT หรือ <code>LittleFS.format()</code></li>
+  <li>สร้าง <code>/applications</code> และ <code>/system/data</code></li>
+  <li>เขียน system ที่กำลังรันกลับลงไป: stream <code>os.idb</code> จาก flash slot ทีละ 4 KB, เขียน <code>os.json</code> (version + hash) และ <code>/system/assets/default-icon.img</code> ระบบจึง boot ได้อีกครั้งโดยไม่ต้อง deploy ใหม่</li>
+  <li>ล้าง memory ในหน่วยความจำและ <code>regClear()</code> (ค่าตั้งกลับเป็นค่าเริ่มต้น)</li>
+</ol>
+<p>ผลคือเหลือแค่ file system กับ system: แอปทั้งหมดและข้อมูลของแอปหายไป จากนั้นติดตั้งแอปใหม่ได้จากแอป Apps (store) หรือ <code>iotdash run --device</code> ในโฟลเดอร์ของแอป</p>
+
+<h2 id="apps-changed">ติดตั้ง/ลบแอปจากคอมพิวเตอร์ขณะเครื่องทำงาน</h2>
+<p><code>iotdash install</code> และ <code>iotdash uninstall</code> (<code>--to device</code>) เขียนไฟล์ผ่าน dev link (<code>FS_WRITE</code>, <code>FS_DELETE</code>, …) แล้วส่ง <code>APPS_CHANGED</code> พร้อม id ของแอป บอร์ดเรียก <code>Os::appsChanged(id)</code>:</p>
+<ul>
+  <li>ถ้าแอปที่เปลี่ยนคือแอปที่กำลังรัน → ปิดแอปกลับ home (image ถูกเปลี่ยนจากข้างใต้)</li>
+  <li>ไม่เช่นนั้น → ส่ง event <code>apps</code> ให้ home ซึ่งฟังด้วย <code>os.on('apps', render)</code> แล้ววาดรายการแอปใหม่ทันที</li>
+</ul>
+
+<h2 id="store">แอป Apps และ iotstore</h2>
+<p>system app <b>Apps</b> (<code>os/core/apps/store/</code>) คุยกับ API ของ <a href="../guide/store.html">store</a> (<code>store/docs/API.md</code>) ที่อยู่ของ store เก็บใน registry <code>store.url</code> (ตั้งจากปุ่ม <i>Store address</i> ในแอป)</p>
+<ul>
+  <li><b>Store</b>: <code>GET /api/store/apps?os=&lt;os.version&gt;</code> ได้แอปที่มีเวอร์ชัน published ซึ่ง <code>os_min</code> ไม่ใหม่กว่า OS นี้ เทียบกับ <code>os.apps()</code>: ยังไม่มี → Install, เวอร์ชันใน store ใหม่กว่า → Update, ไม่เช่นนั้น → Open แตะแถวเพื่อดูทุกเวอร์ชัน (วันที่, ขนาด, OS ขั้นต่ำ, release notes) และติดตั้งเวอร์ชันใดก็ได้ (Update / Go back / Reinstall)</li>
+  <li><b>Installed</b>: แอปบนการ์ดพร้อมป้ายที่มา <code>Store</code> / <code>USB</code> / <code>Card</code> จาก <code>install.json</code> (<a href="../reference/file-formats.html#json">format</a>), เวอร์ชัน, Update ถ้ามีใหม่กว่า, "Use store's" สำหรับแอปที่ลงผ่าน USB แต่มีใน store, Remove</li>
+  <li>ติดตั้ง: <code>POST /api/store/apps/&lt;id&gt;/install</code> ได้ URL ของแพ็กเกจ (presigned) แล้ว <code>os.store.install()</code>: <code>Platform::download</code> ส่ง body ทีละชิ้นให้ <code>IdbzWriter</code> (<code>lib/rt/os_store.cpp</code>) บน thread ของ http เขียนแต่ละไฟล์ลง <code>/applications/.store-&lt;id&gt;/</code> พร้อม SHA-256; จบแล้วบน thread ของ engine ย้ายไฟล์แทนของเดิม (<code>app.idb</code> สุดท้าย), เขียน <code>install.json</code>, <code>appsChanged(id)</code> ล้มที่จุดใดก็ตาม ไฟล์เดิมของแอปไม่ถูกแตะ</li>
+  <li>ความคืบหน้า: event <code>install</code> ทุก ~150 ms; ติดตั้งแอปที่กำลังเปิดอยู่ไม่ได้</li>
+  <li>รายการล่าสุดและไอคอน (IMG1 จาก store) เก็บที่ <code>/system/data/store/</code> ใช้แสดงตอน offline</li>
+</ul>
+<p>บนบอร์ดจริง (flash ภายใน, Wi-Fi, backend ในเครื่อง Mac): แอปขนาด 481 KB อัปเดต 1.0 → 1.1 ใน 5.3 วินาที</p>
+
+<h2 id="home">Home screen</h2>
+<ul>
+  <li><code>os/core/home/</code>: แสดงแอปหน้าละ 10 ตัว (<code>PER_PAGE</code>) เลื่อนซ้ายขวาด้วย scroll snap พร้อมจุดบอกหน้า และจำหน้าล่าสุดใน <code>localStorage.homePage</code></li>
+  <li>นาฬิกาเป็น background process แบบ PAGE (หยุดเองเมื่อเปิดแอป) อ่าน <code>clock24</code> จาก registry</li>
+  <li>เมื่อยังไม่มีแอปที่ติดตั้ง จะแสดงคำแนะนำ <code>iotdash run --device</code> และแอป Apps</li>
+</ul>
+
+<h2 id="settings">Settings (system app)</h2>
+<p><code>os/core/apps/settings/</code> มีแท็บแบบ tile:</p>
+<table>
+<tr><th>แท็บ</th><th>เนื้อหา</th></tr>
+<tr><td>General</td><td>กลุ่ม Display (Dark mode → <code>darkMode</code>) และ Clock (24-hour → <code>clock24</code> พร้อมตัวอย่างเวลา <code>#clockSample</code>)</td></tr>
+<tr><td>Connection</td><td>segment Wi-Fi / Bluetooth (ดู <a href="#connection">ด้านล่าง</a>)</td></tr>
+<tr><td>SD card</td><td>การ์ดข้อมูล storage (ชนิด, ชื่อ, ความจุ, พื้นที่ใช้ไป), รายการแอปพร้อม icon และปุ่ม Remove สีแดงอ่อน, Danger zone พร้อมปุ่ม Format (ถามยืนยันด้วย <code>os.confirm</code>)</td></tr>
+<tr><td>System</td><td>แถว key/value (iotdash OS version, Storage, Apps installed), ค่าใน registry แสดงเป็น pill (key <code>secure.*</code> แสดงเป็น ••••••) และปุ่ม Reset registry</td></tr>
+</table>
+<p>สีใช้ token ใน <code>os/core/theme.css</code> (มี <code>--accent-soft</code> และ <code>--danger-soft</code> ทั้งโหมดสว่างและมืด) และขนาด font เลือกให้ตรงกับ atlas ของระบบที่มีอยู่แล้ว เพื่อไม่ให้แอปต้องพก font เพิ่ม</p>
+
+<h3 id="connection">แท็บ Connection</h3>
+<p><code>connection.js</code> แสดงสิ่งที่ OS รู้และส่งคำขอผ่าน <code>os.wifi</code> / <code>os.bt</code> เท่านั้น (รายการเครือข่ายและรหัสเป็นของ OS) segment ที่เลือกถูกจำใน <code>localStorage.connView</code></p>
+<table>
+<tr><th>Segment</th><th>มีอะไร</th></tr>
+<tr><td>Wi-Fi</td><td>สวิตช์เปิดปิด (<code>wifi.enabled</code>), เครือข่ายที่ใช้อยู่พร้อมสถานะ (Connected / Connected, no internet / กำลังต่อ), IP และปุ่ม Disconnect / Forget; รายการจาก scan พร้อมแถบสัญญาณ (4 ขั้นจาก RSSI) และรูปกุญแจ เครือข่ายที่บันทึกขึ้นก่อนพร้อมปุ่ม Forget; scan ใหม่เมื่อเปิดแท็บ (ถ้าเกิน 8 วินาที) และทุก 20 วินาทีระหว่างที่แท็บแสดงอยู่</td></tr>
+<tr><td>Wi-Fi: เข้าร่วม</td><td>แตะเครือข่ายที่บันทึก = ต่อด้วยรหัสเดิม; เครือข่ายเปิด = ต่อทันที; เครือข่ายมีรหัส = sheet เล็กสำหรับใส่รหัส (ปุ่ม Join ใช้ได้เมื่อยาว ≥ 8 ตัว, <kbd>Enter</kbd> = Join, ปุ่มรูปตาแสดงรหัส, แตะนอก sheet = ยกเลิก) รหัสผิดจะเปิด sheet อีกครั้งพร้อม "Wrong password, try again"</td></tr>
+<tr><td>Bluetooth</td><td>สวิตช์ (<code>bt.enabled</code>, สถานะ "On · starts when a device is used" เมื่อ radio ยังไม่เริ่ม), My devices (อุปกรณ์ที่จำไว้, ที่ต่ออยู่ขึ้นก่อน, ปุ่ม Connect / Disconnect / Forget), Devices nearby (scan 8 วินาที, แตะเพื่อต่อแล้วถูกจำ, อุปกรณ์ไม่มีชื่อซ่อนไว้หลัง "Show N devices without a name")</td></tr>
+</table>
+<p>Forget ทั้งสองแบบถามยืนยันด้วย <code>os.confirm</code> ผลของการกระทำแสดงเป็น toast ด้านล่าง หน้านี้อัปเดตตาม event <code>net</code> และ <code>bt</code> ไม่ใช่ event <code>registry</code> โมเด็ม 4G Cat-1 ถ้ามีในอนาคตจะเพิ่มเป็นอีก segment (ยังไม่ได้ทำ) รายละเอียดของ policy อยู่ที่ <a href="../core/connectivity.html">Wi-Fi และ Bluetooth</a></p>
+</main>
+</body>
+</html>

@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ข้อจำกัดและงานที่ค้าง — iotdash docs</title>
+<link rel="stylesheet" href="../assets/docs.css">
+<script src="../assets/nav.js" defer></script>
+</head>
+<body>
+<nav id="sidebar"></nav>
+<main>
+<div class="crumb">โปรเจกต์</div>
+<h1>ข้อจำกัดและงานที่ค้าง</h1>
+<p class="lead">สิ่งที่ยังไม่สมบูรณ์, ข้อจำกัดที่ตั้งใจ, และงานที่รอการตัดสินใจ ณ วันที่ 10 ต.ค. 2026</p>
+<div id="toc"></div>
+
+<h2 id="decisions">รอการตัดสินใจ</h2>
+<h3>ค่าในแอปยังอยู่หลังกลับ home <span class="tag warn">รอตัดสินใจ</span></h3>
+<p><b>อาการ:</b> เปิด Calculator พิมพ์ตัวเลข กด home แล้วเปิดใหม่ ตัวเลขเดิมยังอยู่</p>
+<p><b>สาเหตุ:</b> ไม่ใช่ cache: แอปปิดจริง (JS session จบ, image ถูกปล่อย) แต่ Calculator เก็บ <code>expr</code>/<code>ans</code> ใน <code>localStorage</code> ซึ่งคือไฟล์ <code>memory.json</code> แบบถาวร เพื่อให้หน้า Scientific/History เห็นค่าเดียวกัน (เพราะแต่ละหน้าเป็น JS context ใหม่) <code>sessionStorage</code> ตอนนี้เป็นของแต่ละหน้าจึงใช้ข้ามหน้าไม่ได้</p>
+<p><b>ข้อเสนอ:</b> ให้ OS มี <code>sessionStorage</code> ระดับแอป: ใช้ร่วมทุกหน้าของแอป, อยู่ในหน่วยความจำ, ล้างเมื่อออกจากแอป แล้วให้ Calculator ใช้ <code>sessionStorage</code> สำหรับค่าบนจอ (คง history และ count ไว้ใน storage ถาวร)</p>
+<p><b>สถานะ:</b> ยังรอคำตอบจากผู้ใช้ (10 ต.ค.) ยังไม่ได้เปลี่ยนอะไรใน OS</p>
+
+<h2 id="hardware">ฮาร์ดแวร์</h2>
+<table>
+<tr><th>เรื่อง</th><th>สถานะ</th><th>ทางเลี่ยง</th></tr>
+<tr><td>ช่อง SD ของบอร์ดที่ใช้พัฒนาเสีย</td><td><span class="tag bad">ฮาร์ดแวร์</span> หน้าสัมผัสไม่แตะการ์ด; firmware ทางการก็อ่านไม่ได้</td><td>ใช้ LittleFS ใน flash (5.2 MB); ส่งเคลมพร้อมผล <code>SD_Test.bin</code> และผลวัด; หรือโมดูล SD ภายนอก</td></tr>
+<tr><td>เส้นทาง SD ยังไม่ได้ทดสอบบนบอร์ดจริง</td><td><span class="tag warn">ยังไม่ทดสอบ</span> ทดสอบเฉพาะใน simulator และ LittleFS</td><td>ทดสอบเมื่อได้บอร์ด/ช่องที่ใช้ได้ (mount, format, ความเร็วคัดลอก image)</td></tr>
+<tr><td>Touch จุดเดียว</td><td>ใช้จุดแรกจาก 5 จุดของ GT911</td><td>ยังไม่มี pinch/multi-touch</td></tr>
+<tr><td>เปิด serial port แล้วบอร์ด reset</td><td>สาย DTR/RTS ต่อกับ EN/IO0 การเปิดพอร์ตทุกครั้งทำให้บอร์ด boot ใหม่</td><td>เครื่องมือรอจนบอร์ดตอบ PING ("ready") ก่อนทำงาน; งานหลายขั้นทำใน connection เดียว</td></tr>
+</table>
+
+<h2 id="connectivity">Wi-Fi และ Bluetooth</h2>
+<table>
+<tr><th>เรื่อง</th><th>รายละเอียด</th><th>แนวทาง</th></tr>
+<tr><td>Packet ของ dev link หายบ้างเมื่อเปิด Wi-Fi</td><td>บางครั้ง frame ไม่ถึงบอร์ดหรือคำตอบไม่กลับ บอร์ดทิ้ง frame ที่ขาดกลางทางเมื่อสายเงียบ 500 ms; <code>wait_ready</code> ส่ง PING ซ้ำจนบอร์ดตอบ แต่คำสั่งที่ส่งไปแล้วไม่ได้ ACK (เช่น chunk ของ <code>FS_WRITE</code>) ยังไม่มีการส่งซ้ำอัตโนมัติ: เครื่องมือหยุดด้วย "no answer from the board"</td><td>รันคำสั่งใหม่; ถ้าเกิดบ่อยควรเพิ่ม retry ต่อ chunk ใน <code>DeviceCard</code></td></tr>
+<tr><td>SRAM ภายในสำหรับ radio</td><td>เปิด Wi-Fi + BLE แล้ว SRAM เหลือ ≈48 KB; radio ปฏิเสธถ้าเหลือไม่ถึง 34 KB (Wi-Fi) / 30 KB (BLE)</td><td>ของใหม่ที่ต้องอยู่ใน SRAM ต้องวัดด้วย <code>heap</code> ก่อน</td></tr>
+<tr><td>รหัส Wi-Fi ไม่ได้เข้ารหัส</td><td>อยู่ใน registry (NVS) และใน <code>os.idb</code> (จาก <code>secrets.json</code>) แบบ plain text ซ่อนจาก script ของแอปเท่านั้น</td><td>NVS encryption / flash encryption ถ้าต้องการ</td></tr>
+<tr><td>Bluetooth LE แบบจำกัด</td><td>central เท่านั้น, ต่อพร้อมกัน 2 อุปกรณ์, ไม่มี pairing/bonding, ข้อมูลต่อครั้งไม่เกิน 512 byte</td><td>–</td></tr>
+<tr><td>Wi-Fi</td><td>2.4 GHz เท่านั้น, ไม่แสดงเครือข่ายที่ซ่อนชื่อ, ไม่มี WPA-Enterprise / captive portal login</td><td>–</td></tr>
+<tr><td>4G Cat-1</td><td>วางแผนไว้ในแท็บ Connection เดียวกัน</td><td>ยังไม่ได้ทำ</td></tr>
+</table>
+
+<h2 id="performance">ประสิทธิภาพและหน่วยความจำ</h2>
+<table>
+<tr><th>เรื่อง</th><th>รายละเอียด</th><th>แนวทาง</th></tr>
+<tr><td>Paint ของปุ่มที่มี transform ~25 ms</td><td>Calculator กดปุ่ม: <code>:active { transform: scale(.95) }</code> + shadow ทำให้ paint เป็นส่วนที่ช้าที่สุดของ ~31 ms</td><td>cache ของกล่องที่ transform, หรือใช้ effect ที่ถูกกว่า (เปลี่ยนสีพื้น)</td></tr>
+<tr><td>JS realm เก่าค้าง ~400 KB</td><td>APP process ที่สร้างในหน้าแรกถือ closure ของ realm นั้นไว้ PSRAM ต่ำสุดเคยเหลือ ~270 KB (ก่อนแก้ shadow cache) / ~480 KB (ปัจจุบัน) ตอน modal ทับหน้า History</td><td>ให้ APP process รันใน realm กลางของแอป หรือแนะนำให้สร้างจากไฟล์ที่ไม่อ้าง DOM</td></tr>
+<tr><td>2 page buffer</td><td>เฟรมที่ใช้เวลาเกิน ~25 ms เสียหนึ่งรอบจอ</td><td><code>-DRGB_PAGES=3</code> เมื่อ PSRAM พอ (ต้องการ 750 KB + 1.5 MB ว่าง)</td></tr>
+<tr><td>Glyph/รูปถูกข้ามเมื่อหน่วยความจำต่ำ</td><td>font ไม่คัดลอกถ้าเหลือ &lt; 256 KB, สำเนารูป &lt; 384 KB: ข้อความบางตัวอาจหาย</td><td>ตั้งใจ (ดีกว่าระบบล่ม); ดู <code>psram</code> ใน stats</td></tr>
+<tr><td>font ขนาดใหญ่ (&gt; 34 px) มีเฉพาะตัวที่เห็นตอน build</td><td>ข้อความที่ JS สร้างใหม่ที่ขนาดนั้นอาจไม่มี glyph</td><td>ใส่ตัวอักษรตัวอย่างไว้ในไฟล์ของแอป เช่น element ที่ <code>display: none</code> (build อ่าน font ของ element ที่ซ่อนด้วย)</td></tr>
+<tr><td>ตาราง font ≈26 KB ต่อ face</td><td>ทุก (weight, size) ที่หน้าใช้ถือ glyph metrics ≈4.5 KB + kerning ≈6.5 KB + ตำแหน่งสระไทย ≈14 KB ตลอดเวลาที่หน้าเปิด (หลังงานรอบ แอปตาชั่ง ถูกปล่อยเมื่อเปลี่ยนหน้า)</td><td>ใช้ขนาดของระบบ; ถ้าต้องลดอีก: โหลดตารางไทยเฉพาะ face ที่มีข้อความไทย หรือย่อตาราง</td></tr>
+<tr><td>GC หลังเปลี่ยนจอ ≈35 ms</td><td>เมื่อ node ใต้ wrapper ถูกถอด ≥ 150 ตัว ระบบเรียก <code>JS_RunGC</code> หลังหน้านิ่ง 600 ms (ห่างกัน ≥ 2 วินาที) อาจเห็นเป็นการตอบสนองช้าหนึ่งครั้งถ้าแตะตรงจังหวะนั้น</td><td>ตั้งใจ (แลกกับ PSRAM ที่คงที่); ปรับเกณฑ์ใน <code>JsHost::tick</code> ถ้าจำเป็น</td></tr>
+<tr><td><code>Function.prototype.toString</code> ไม่มี source</td><td>QuickJS ไม่เก็บ source ของ function (ประหยัด ≈130 KB ต่อหน้า)</td><td>ตั้งใจ; build ใหม่ด้วย <code>-DQJS_KEEP_FUNCTION_SOURCE=1</code> ถ้ามี library ที่ต้องใช้</td></tr>
+<tr><td>ดาวน์โหลดแอปบัง fetch อื่น</td><td>board มี worker ของ HTTP ตัวเดียว ระหว่างติดตั้งจาก store (ไม่กี่วินาทีต่อ 500 KB) fetch ของหน้าเข้าคิวรอ (คิว 8 งาน)</td><td>worker ตัวที่สองสำหรับ download ถ้า SRAM ภายในพอ (TLS อีกชุด)</td></tr>
+<tr><td>Firmware ใช้ partition <code>app0</code> 91.5%</td><td>3.78 MB จาก 4.03 MB หลังเพิ่ม store</td><td>ขยาย <code>app0</code> (flash 16 MB ยังว่าง) ก่อนเพิ่มของใหญ่</td></tr>
+<tr><td>ขนาด image</td><td>แอป ≤ 1.5 MB, ระบบ ≤ 2.25 MB (ปัจจุบัน ~1.77 MB, Calculator ~864 KB, แอปตาชั่ง ~465 KB)</td><td>ใช้ font ของระบบ, ย่อรูป</td></tr>
+</table>
+
+<h2 id="verify">ต้องยืนยันบนบอร์ดด้วยมือจริง</h2>
+<ul>
+  <li>การตอบสนองของ Calculator หลังแก้ invalidation (~31 ms ต่อการกด) ทดสอบผ่าน USB tap และ log แล้ว แต่ยังรอผลจากนิ้วจริง</li>
+  <li>การปัดแถบล่างและการแตะเร็วๆ ผ่าน touch task ใหม่</li>
+  <li>ความรู้สึกของ glitch: ตัวนับ tear เป็น 0 เกือบทุกสถานการณ์ (ดูข้อถัดไป) แต่การมองจริงเป็นตัวตัดสินสุดท้าย</li>
+  <li>interrupt ของจอย้ายไป core 1 แล้ว (ห่างจาก radio): ใน flow ทดสอบ <code>late</code> 10 → 0 และ tear 25 → 7 ครั้ง tear ที่เหลือเกิดช่วงเปิดหน้า (<code>load</code>) ตอนอ่าน font/รูปจาก flash ยังควรลดต่อ (pacing หรือ bounce buffer 16 แถวถ้ามี SRAM ภายในพอ)</li>
+  <li>bounce buffer เหลือ 12 แถว (งบเวลาต่อ buffer ~615 µs จาก ~820 µs): ใช้ แอปตาชั่ง ครบ flow ขณะ Wi-Fi ทำงาน (login, เลือกสถานที่, วัสดุ, สรุป วน 20 รอบ) สองรอบ รอบแรก <code>tears</code> 0 รอบที่สอง <code>tears</code> 5 เกิดครั้งเดียวตอนเข้าหน้าชั่งครั้งแรก ทั้งหมดอยู่ในช่วงอ่าน flash (<code>io 4, idle 1</code>) ขณะโหลดตาราง font ตัวเลขใหญ่ ส่วน <code>late</code> เป็น 0 ทั้งสองรอบ ตอนนี้ตาราง font ถูกอ่านจาก flash ใหม่ทุกครั้งที่เปิดหน้า (แลกกับ RAM) จึงควรเฝ้าดูว่า tear ช่วงเปิดหน้าเพิ่มขึ้นหรือไม่ ยังไม่ได้วัดใหม่กับ stress <code>f</code></li>
+</ul>
+
+<h2 id="store">iotstore</h2>
+<ul>
+  <li>ทดสอบกับ backend ในเครื่อง (moto + Flask, HTTP) ครบทุกขั้นทั้ง simulator, เว็บ และบอร์ดจริง กับ S3 จริง: ลายเซ็นของ presigned GET/POST ผ่าน (S3 ตอบ NoSuchKey / ตรวจ policy) และ desktop simulator โหลดผ่าน HTTPS ได้ ยังไม่ได้ลองบนบอร์ด (ผ่าน TLS ไป <code>&lt;bucket&gt;.s3.ap-southeast-1.amazonaws.com</code>; บน Lambda URL ยาว ~1.5 KB เพราะมี session token: ขยาย buffer ส่งของ download เป็น 3 KB แล้ว)</li>
+  <li>บอร์ดยังไม่ส่งรหัสเครื่องตอนติดตั้ง (<code>device</code>) ตัวนับ installs นับทุกครั้งที่กด</li>
+  <li>หน้า Simulate: แอปที่ fetch ไป server อื่นจากเบราว์เซอร์ต้องให้ server นั้นเปิด CORS</li>
+</ul>
+
+<h2 id="tooling">เครื่องมือและ repo</h2>
+<table>
+<tr><th>เรื่อง</th><th>รายละเอียด</th></tr>
+<tr><td>คำสั่งยุคก่อน OS</td><td>ย้ายไปอยู่ใต้ <code>iotdash legacy</code> แล้ว แต่ <code>legacy flash</code> ยังเขียน bundle ที่ 0x400000 ซึ่งตอนนี้คือ partition <code>sys</code> และ <code>legacy dev</code> ถูกบอร์ดปฏิเสธ ควรลบ</td></tr>
+<tr><td>ชื่อพอร์ต USB ตายตัว</td><td><code>/dev/cu.usbmodem5B901262921</code> อยู่ใน <code>platformio.ini</code> และ <code>tools/iotdash.py</code> เครื่องอื่นต้องแก้สองที่</td></tr>
+<tr><td><code>Os::kVersion</code> อยู่ในสองที่</td><td>firmware และ <code>os.json</code> (osbuild อ่านจาก <code>os.h</code>) เปลี่ยน version ต้อง build ทั้งคู่</td></tr>
+</table>
+
+<h2 id="api">ข้อจำกัดของ API</h2>
+<ul>
+  <li>ไฟล์ที่ <code>open()</code> แล้วไม่ปิด จะค้างจนออกจากแอป (ไม่ผูกกับ scope ของหน้า)</li>
+  <li><code>history.go(-n)</code> ย้อนได้ทีละหนึ่งหน้า</li>
+  <li>การย้อนกลับเปิดหน้าใหม่ ไม่คืน DOM/สถานะ JS เดิม</li>
+  <li>registry เขียนได้เฉพาะ system app (ไม่มีระบบขอสิทธิ์)</li>
+  <li>ไม่มีการจำกัดขนาด <code>memory.json</code> หรือ <code>data/</code> ต่อแอป</li>
+  <li><code>fetch</code> ภายนอกต้องมี Wi-Fi; รหัส Wi-Fi เก็บใน registry แบบไม่เข้ารหัส (ซ่อนจากแอป)</li>
+  <li>แอปเปลี่ยนการเชื่อมต่อเองไม่ได้ (เปิดปิด radio, เลือกเครือข่าย): ต้องส่งผู้ใช้ไป Settings</li>
+  <li>simulator ไม่จำลอง bus, tear และความเร็วจริงของบอร์ด</li>
+</ul>
+</main>
+</body>
+</html>

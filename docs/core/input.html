@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Touch และ input — iotdash docs</title>
+<link rel="stylesheet" href="../assets/docs.css">
+<script src="../assets/nav.js" defer></script>
+</head>
+<body>
+<nav id="sidebar"></nav>
+<main>
+<div class="crumb">แกนระบบ (core)</div>
+<h1>Touch และ input</h1>
+<p class="lead">เส้นทางของการแตะหนึ่งครั้ง ตั้งแต่ชิป GT911 จนถึง <code>click</code> ในแอป: task อ่าน touch ของตัวเอง, คิวพร้อมเวลาที่ sample, gesture ของ OS, <code>InputController</code> (ลาก, scroll, คลิก) และวิธี debug ด้วย <code>ilog</code></p>
+<div id="toc"></div>
+
+<h2 id="path">เส้นทางของการแตะ</h2>
+<div class="flow">
+  <div class="box">GT911<br><small>I2C 0x5D</small></div><span class="arrow">→</span>
+  <div class="box">touch task<br><small>core 0, prio 6, ทุก 8 ms</small></div><span class="arrow">→</span>
+  <div class="box">touchQ<br><small>64 event + เวลา sample</small></div><span class="arrow">→</span>
+  <div class="box">drainTouch<br><small>engine loop ก่อน app</small></div><span class="arrow">→</span>
+  <div class="box">Os::pointer<br><small>shell, gesture</small></div><span class="arrow">→</span>
+  <div class="box">InputController<br><small>event ของ DOM</small></div>
+</div>
+
+<h2 id="task">Touch task (layer 3)</h2>
+<ul>
+  <li>task <code>touch</code> บน core 0 priority 6 (สูงกว่า paint helper) อ่านชิปทุก 8 ms (~120 Hz) ด้วย <code>vTaskDelayUntil</code> ไม่ว่า engine จะทำอะไรอยู่</li>
+  <li>ใช้จุดแรกจากสูงสุด 5 จุด; ส่ง <code>DOWN</code> เมื่อเริ่มแตะ, <code>MOVE</code> เมื่อพิกัดเปลี่ยน, <code>UP</code> เมื่อปล่อย (ที่พิกัดสุดท้าย)</li>
+  <li>แต่ละ event มี <code>esp_timer_get_time()</code> ตอน sample ติดไปด้วย</li>
+  <li>ถ้าคิวเต็ม (engine ค้าง): MOVE ถูกทิ้ง แต่ DOWN/UP จะดัน event เก่าสุดออกแทน ไม่ให้การกด/ปล่อยหาย</li>
+  <li>การแตะจำลองผ่าน USB (<code>device tap</code>, dev-link <code>TOUCH</code>) ใส่ลงคิวเดียวกัน จึงวิ่งเส้นทางเดียวกับนิ้วจริง</li>
+</ul>
+
+<h2 id="loop">การรับ event ใน engine loop</h2>
+<pre><code>while (true) {
+  devlink.poll();          <span class="c">// phase io</span>
+  drainTouch();            <span class="c">// phase input: ทุก event ในคิว → eng-&gt;pointerAt(…, sampleUs)</span>
+  bool drew = eng-&gt;update();
+  if (!drew) xQueuePeek(touchQ, …, idle ≤ 16 ms);   <span class="c">// หลับ แต่ตื่นทันทีเมื่อมี touch</span>
+}</code></pre>
+<p>touch ถูกส่งก่อน app process เสมอ เพราะแอปต้องเห็นพื้นที่กด (layout ล่าสุด) ก่อนจึงตรวจได้ว่าแตะโดนอะไร <code>pointerAt()</code> ตั้งเวลาของ event (<code>eventUs_</code>) เป็นเวลาที่ sample จริง ความเร็วของ scroll และ gesture จึงคำนวณจากเวลาจริง ไม่ใช่เวลาที่ engine ว่างมาอ่าน</p>
+
+<h2 id="os">ชั้น OS ได้ก่อน</h2>
+<p><code>Engine::pointer()</code> ตั้ง watchdog ของ JS แล้วถาม <code>Os::pointer()</code> ก่อน ถ้า OS รับไว้ แอปจะไม่เห็น event นั้นเลย</p>
+<table>
+<tr><th>สถานการณ์</th><th>OS ทำอะไร</th></tr>
+<tr><td>dialog เปิด หรือกำลังเปิดแอป</td><td>รับทุก touch (exclusive) ปุ่มใน dialog ทำงานตอน UP ถ้ายังอยู่บนปุ่มเดิม</td></tr>
+<tr><td>แถบล่างแสดงอยู่ และแตะปุ่ม home/back</td><td>รับไว้, ต่อเวลาซ่อนแถบอีก 3.5 วินาที, ทำ action ตอน UP</td></tr>
+<tr><td>DOWN ในแถบ 18 px ล่างสุด (อยู่ในแอป)</td><td>เริ่ม gesture; ถ้าลากขึ้นเกิน 24 px จะแสดงแถบล่าง; รับ event ของนิ้วนั้นทั้งหมด</td></tr>
+<tr><td>อื่นๆ</td><td>ส่งต่อให้ <code>InputController</code></td></tr>
+</table>
+
+<h2 id="controller">InputController</h2>
+<h3>DOWN</h3>
+<ul>
+  <li>flush layout แล้ว hit-test หา target (ถ้าไม่โดนอะไรใช้ <code>&lt;body&gt;</code>)</li>
+  <li>ตั้ง <code>:active</code> ให้ target (และบรรพบุรุษ ตาม CSS) ส่ง <code>pointerdown</code>, <code>touchstart</code>, <code>mousedown</code></li>
+  <li>form control (slider ฯลฯ) อาจ "capture" pointer ไว้ (<code>captured_</code>)</li>
+  <li>DOWN ที่ห่างขอบซ้ายไม่เกิน 16 px เริ่ม swipe-back ได้</li>
+</ul>
+<h3>MOVE</h3>
+<ul>
+  <li>ยังไม่ถือเป็นการลากจนเลื่อนเกิน <b>9 px</b> (<code>kSlop</code>)</li>
+  <li>เมื่อเกิน: หา scroll container ในทิศที่ลาก (ลองทิศหลักก่อน แล้วทิศตั้งฉาก) ถ้าเจอ จะเริ่ม scroll, ยกเลิก <code>:active</code> และส่ง <code>pointercancel</code>/<code>touchcancel</code> (คลิกจะไม่เกิด)</li>
+  <li>ถ้าไม่มีอะไร scroll ได้: ส่ง <code>pointermove</code>/<code>touchmove</code>/<code>mousemove</code> ต่อ และถ้าเลื่อนเกิน <b>24 px</b> คลิกจะถูกยกเลิก</li>
+  <li>เก็บ sample 120 ms ล่าสุดไว้คำนวณความเร็ว</li>
+</ul>
+<h3>UP</h3>
+<ul>
+  <li>swipe-back: ลากไปทางขวาเกิน 90 px จากขอบซ้าย → ย้อนหน้า</li>
+  <li>หลัง scroll: momentum ถ้าความเร็ว &gt; 40 px/s หรือ snap ไปจุด <code>scroll-snap-align</code> ที่ใกล้ตำแหน่งที่ momentum จะพาไป (ใช้ใน home screen)</li>
+  <li>ไม่ได้ scroll: ส่ง <code>pointerup</code>/<code>touchend</code>/<code>mouseup</code> แล้วส่ง <code>click</code> ถ้าคลิกไม่ถูกยกเลิก และจุดที่ปล่อยยังอยู่บน target เดิม (หรือลูก/บรรพบุรุษของมัน)</li>
+  <li>ถ้า <code>click</code> ไม่ถูก <code>preventDefault()</code> จะทำ default action: ลิงก์, form control, label, summary, blur</li>
+</ul>
+
+<h2 id="tips">ข้อแนะนำสำหรับแอป</h2>
+<ul>
+  <li>ใช้ <code>click</code> สำหรับปุ่มทั่วไป จะได้พฤติกรรมยกเลิกเมื่อลาก/scroll ที่ถูกต้อง</li>
+  <li>ใช้ <code>pointerdown</code> เมื่อต้องการตอบสนองทันที (เช่นปุ่มเครื่องคิดเลข) แต่ต้องจัดการการลากเอง</li>
+  <li>ทำปุ่มให้ใหญ่พอ (≥ 44 px) ความละเอียดของ touch บนจอนี้ไม่ได้แม่นระดับ pixel</li>
+  <li>อย่าวาง element ที่ต้องแตะไว้ใน 18 px ล่างสุด เพราะเป็นพื้นที่ของ gesture เปิดแถบล่าง (ในแอป)</li>
+  <li>หลีกเลี่ยง selector แบบ <code>.row:active .label</code> หรือ <code>:active ~ x</code> เพราะทำให้การกดต้อง restyle subtree/พี่น้อง (ดู <a href="engine.html#invalidation">invalidation</a>)</li>
+</ul>
+
+<h2 id="debug">Debug: <code>ilog</code></h2>
+<p>คำสั่ง text <code>ilog</code> สลับ flag <code>DBG_INPUT</code> (0x10) แล้ว log ทุกขั้น:</p>
+<pre><code>touch: DOWN 412,301 (sampled 3 ms ago)
+input: down 412,301 -&gt; &lt;div class=key&gt; (5 ms late)
+touch: UP 412,301 (sampled 2 ms ago)
+input: click &lt;div&gt;
+input: up 120,460: no click (moved 31,2)
+input: down 400,470 -&gt; system</code></pre>
+<p>ใช้แยกปัญหาได้ว่า touch มาถึงช้า (sampled … ago สูง), ไปโดน element ผิด, ถูก OS รับไป, หรือคลิกถูกยกเลิกเพราะลาก</p>
+<div class="note"><p><b>กรณีศึกษา Calculator "กดไม่ติด":</b> log จากนิ้วจริงแสดงว่าทุกการกดถึงแอปครบ (<code>click</code> ทุกครั้ง) แต่ engine ใช้ ~130 ms ต่อการกด และการแตะแรกหลังเปลี่ยนหน้ารอคิว 450–530 ms จึงรู้สึกเหมือนกดไม่ติด ต้นเหตุคือ restyle/relayout ทั้งหน้า ไม่ใช่ input แก้แล้วเหลือ ~31 ms (ดู <a href="engine.html#invalidation">Rendering engine</a>)</p></div>
+</main>
+</body>
+</html>

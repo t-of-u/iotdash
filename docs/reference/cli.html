@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>เครื่องมือ command line — iotdash docs</title>
+<link rel="stylesheet" href="../assets/docs.css">
+<script src="../assets/nav.js" defer></script>
+</head>
+<body>
+<nav id="sidebar"></nav>
+<main>
+<div class="crumb">อ้างอิง</div>
+<h1>เครื่องมือ command line</h1>
+<p class="lead">คำสั่งเดียว <code>iotdash</code> (<code>bin/iotdash</code> ของ SDK) ทำทุกอย่างฝั่งคอมพิวเตอร์: สร้างและ build แอป, simulator, ติดตั้งลงบอร์ดหรือการ์ด, แพ็กและส่งขึ้น store, ภาพระบบ, firmware และคุยกับบอร์ด เรียกจากที่ไหนก็ได้ (ใน script, CI, Makefile, npm scripts) คำสั่งของแอปทำงานกับโปรเจกต์ในโฟลเดอร์ปัจจุบัน</p>
+<div id="toc"></div>
+
+<h2 id="setup">ติดตั้ง</h2>
+<pre><code>cd iotdash && scripts/setup.sh          <span class="c"># ครั้งแรก (--web, --firmware: ส่วนเสริม)</span>
+export PATH="$PATH:/path/to/iotdash/bin"  <span class="c"># ใส่ใน ~/.zshrc</span>
+iotdash doctor                           <span class="c"># ตรวจเครื่องมือทั้งหมด</span>
+iotdash --version                        <span class="c"># OS ของ SDK และที่อยู่</span></code></pre>
+<p><code>bin/iotdash</code> ตามลิงก์ไปหา SDK เอง (ลิงก์ไว้ใน <code>/usr/local/bin</code> ก็ได้) และสร้าง <code>tools/.venv</code> ให้ในครั้งแรก ต้องมี: Python 3.11+, CMake + compiler C++ (SDL2 สำหรับหน้าต่างของ simulator), PlatformIO สำหรับ firmware, Emscripten สำหรับ <code>run --web</code></p>
+
+<h2 id="app">แอป</h2>
+<p><code>APP</code> = โฟลเดอร์ของโปรเจกต์ (ค่าเริ่มต้น: โฟลเดอร์ปัจจุบัน หรือ parent ที่ใกล้ที่สุดที่มี <code>app.json</code>) หรือชื่อตัวอย่างใน <code>examples/</code> ของ SDK เช่น <code>calculator</code></p>
+<table>
+<tr><th>คำสั่ง</th><th>ทำอะไร</th></tr>
+<tr><td><code>iotdash create DIR [--id ID] [--title T]</code></td><td>โปรเจกต์ใหม่จาก <code>templates/app</code> (app.json, icon.svg, main.html/css/js, pages/about.html, README, .gitignore) id ค่าเริ่มต้นมาจากชื่อโฟลเดอร์</td></tr>
+<tr><td><code>iotdash run [APP]</code></td><td>build, ติดตั้งลงการ์ดของ simulator แล้วเปิดแอปในหน้าต่าง (<code>--shot out.png</code>: ถ่ายภาพแทนเปิดหน้าต่าง)</td></tr>
+<tr><td><code>iotdash run [APP] --device</code></td><td>build, ติดตั้งผ่าน USB แล้วเปิดแอปบนบอร์ด (ใน connection เดียว เพราะการเปิด port ทำให้บอร์ด reset)</td></tr>
+<tr><td><code>iotdash run [APP] --web [--port N] [--no-open]</code></td><td>แอปในเบราว์เซอร์: pack แล้วเปิด <code>web/dist/demo.html</code> พร้อมแพ็กเกจ จาก HTTP server ในเครื่อง (Ctrl+C หยุด)</td></tr>
+<tr><td><code>iotdash build [APP]</code></td><td>compile → <code>APP/build/app/</code> (<code>app.idb</code>, <code>app.json</code>, <code>icon.img</code>) ไม่ใส่ atlas ที่ระบบมีแล้ว</td></tr>
+<tr><td><code>iotdash pack [APP] [-o FILE]</code></td><td>build แล้วแพ็กเป็น <a href="file-formats.html#idbz">IDBZ</a>: <code>APP/build/&lt;id&gt;-&lt;version&gt;.idbz</code> (manifest ได้ <code>os.min</code> จาก <code>app.json</code> ค่าเริ่มต้น = OS ของ SDK)</td></tr>
+<tr><td><code>iotdash install [APP] [--to T]</code></td><td>build แล้วเขียน <code>app.idb</code>, <code>icon.img</code>, <code>app.json</code>, <code>install.json</code> ลง <code>/applications/&lt;id&gt;/</code> (<code>memory.json</code> และ <code>data/</code> เดิมยังอยู่)</td></tr>
+<tr><td><code>iotdash install --pack FILE [--to T]</code></td><td>ติดตั้งไฟล์ <code>.idbz</code> ตามที่ store จะติดตั้ง</td></tr>
+<tr><td><code>iotdash uninstall [APP|ID] [--to T]</code></td><td>ลบ <code>/applications/&lt;id&gt;</code> ทั้งโฟลเดอร์ (error ถ้าไม่ได้ติดตั้ง)</td></tr>
+<tr><td><code>iotdash apps [--to T]</code></td><td>รายชื่อแอปบน storage</td></tr>
+<tr><td><code>iotdash publish [APP] [--pack FILE] [--store URL] [--email E] [--notes TEXT] [--draft]</code></td><td>pack แล้วอัปโหลดขึ้น iotstore (สร้าง project ถ้ายังไม่มี) บัญชีจาก <code>IOTSTORE_URL</code>, <code>IOTSTORE_EMAIL</code>, <code>IOTSTORE_PASSWORD</code> (ถามถ้าไม่มี) ไม่บันทึกอะไรไว้ (<code>tools/storeclient.py</code>)</td></tr>
+<tr><td><code>iotdash shot [APP] [--page P] [--dark]</code></td><td>ภาพ simulator ข้างภาพ Chromium: <code>APP/build/compare.png</code> (และ <code>shot-sim.png</code>, <code>shot-chromium.png</code>)</td></tr>
+<tr><td><code>iotdash doctor</code></td><td>ตรวจ Python tools, Chromium, ภาพระบบ, simulator, build เว็บ, PlatformIO, บอร์ดบน USB</td></tr>
+</table>
+
+<h2 id="target">ปลายทาง <code>--to</code></h2>
+<table>
+<tr><th>ค่า</th><th>หมายถึง</th><th>คลาส</th></tr>
+<tr><td>(ไม่ระบุ) หรือ <code>sim</code></td><td>card ของ simulator ที่ <code>os/build/sdcard</code></td><td><code>DirCard</code></td></tr>
+<tr><td><code>device</code></td><td>บอร์ดผ่าน USB (dev link, เขียนทีละ 4 KB แล้วรอ ACK เพราะ buffer รับของบอร์ดมี 6 KB)</td><td><code>DeviceCard</code></td></tr>
+<tr><td>path เช่น <code>/Volumes/SDCARD</code></td><td>การ์ดที่เสียบในคอมพิวเตอร์ (ไฟล์ <code>._*</code> ของ macOS ถูกลบให้)</td><td><code>DirCard</code></td></tr>
+</table>
+<p>เมื่อเขียนเสร็จ <code>DeviceCard.done()</code> ส่ง <code>APPS_CHANGED</code> (ติดตั้ง/ลบแอป) หรือ <code>OS_RELOAD</code> (deploy ระบบ) ให้บอร์ดอัปเดตทันทีโดยไม่ต้อง reset</p>
+
+<h2 id="os">OS: <code>iotdash os …</code></h2>
+<table>
+<tr><th>คำสั่ง</th><th>ทำอะไร</th></tr>
+<tr><td><code>iotdash os build</code></td><td>build system image (<code>os/build/card/system/os.idb</code> + <code>os.json</code> + default icon), boot image (<code>os/build/boot.idb</code> ฝังใน firmware) และ <code>os/build/system-fonts.json</code> ถ้ามี <code>os/core/private/secrets.json</code> จะติดไปใน system image ด้วย (<a href="../core/connectivity.html#secrets">Wi-Fi ที่ติดมากับระบบ</a>)</td></tr>
+<tr><td><code>iotdash os deploy [--to T] [--build]</code></td><td>เขียน <code>/system</code> ลง storage (build ก่อนถ้ายังไม่มี หรือเมื่อมี <code>--build</code>) แล้วสั่ง reload</td></tr>
+<tr><td><code>iotdash os format [--to T]</code></td><td>format storage (ลบทุกอย่างรวมระบบ) แล้วสร้าง <code>/system/data</code>, <code>/applications</code> ต้อง deploy ใหม่หลังจากนี้ ต่างจาก Format ใน Settings ที่เขียนระบบกลับให้</td></tr>
+<tr><td><code>iotdash os sim [--script S] [--shot out.png]</code></td><td>boot OS ใน simulator จาก card ของ sim (build/deploy ให้ถ้ายังไม่มี)</td></tr>
+<tr><td><code>iotdash os ref [--page P] [--app DIR] [--js CODE] [--dark] [-o out.png]</code></td><td>ภาพที่ Chromium วาดหน้าเดียวกัน (800×480, font เดียวกัน, stub ของ <code>os</code>) ไว้เทียบกับบอร์ด <code>--page</code> ค่าเริ่มต้น <code>system/apps/settings/main.html</code>; หน้าของแอปใช้ <code>--app DIR --page app/main.html</code> (หรือ <code>iotdash shot</code>)</td></tr>
+</table>
+<pre><code>iotdash os ref --js "showTab('sdcard')" -o ref.png
+iotdash os ref --app examples/calculator --page app/pages/history/main.html --dark -o hist.png</code></pre>
+
+<h2 id="device">บอร์ด: <code>iotdash device …</code></h2>
+<p>ทุกคำสั่งเปิดพอร์ต (บอร์ด reset), รอ PING แล้วทำงาน (ยกเว้น <code>log</code>)</p>
+<table>
+<tr><th>คำสั่ง</th><th>ทำอะไร</th></tr>
+<tr><td><code>iotdash device shot [out.png]</code></td><td>ภาพหน้าจอ (page ล่าสุดที่ present) ค่าเริ่มต้น <code>device.png</code></td></tr>
+<tr><td><code>iotdash device stats</code></td><td>บรรทัด stats (ดู <a href="../tools/debugging.html#stats">การวัดผล</a>)</td></tr>
+<tr><td><code>iotdash device eval "JS"</code></td><td>รัน JS ในหน้าปัจจุบันและพิมพ์ผล</td></tr>
+<tr><td><code>iotdash device open ID</code></td><td>เปิดแอปตาม id</td></tr>
+<tr><td><code>iotdash device wifi "SSID:PASS"</code></td><td>ต่อ Wi-Fi ทันทีแบบเดียวกับ Settings: บันทึกลง registry (<code>secure.wifi</code>) เมื่อต่อได้ แล้วต่อเองทุกครั้งที่ boot ตอบ "connecting (saved once it is up)"</td></tr>
+<tr><td><code>iotdash device reset</code></td><td><code>esp_restart()</code></td></tr>
+<tr><td><code>iotdash device tap X,Y</code></td><td>แตะจำลอง (DOWN แล้ว UP ห่าง 80 ms) ผ่านคิวเดียวกับนิ้วจริง</td></tr>
+<tr><td><code>iotdash device log [วินาที]</code></td><td>พิมพ์ log ของบอร์ด (ค่าเริ่มต้น 5 วินาที) ไม่รอ PING จึงเห็น log ตั้งแต่ boot</td></tr>
+<tr><td><code>iotdash device probe [cs0|cs1] [sck0|sck1|sckz] [mosi…] [miso…]</code></td><td>ตั้งสถานะสาย SD (ถ้าระบุ) แล้ว stream แรงดันที่ GPIO6 จนกด Ctrl-C (คืนสายเป็นปกติให้ตอนออก)</td></tr>
+<tr><td><code>-v</code></td><td>แสดง log ของบอร์ดระหว่างคำสั่งอื่นด้วย</td></tr>
+</table>
+<div class="note"><p>คำสั่ง text อื่นๆ (เช่น <code>ilog</code>, <code>Tarm</code>, <code>F</code>) ส่งเป็นบรรทัดข้อความธรรมดาทาง serial ได้ เช่นด้วย <code>pio device monitor</code> หรือ Python ดูรายการเต็มใน <a href="devlink.html#text-commands">Dev link</a></p></div>
+
+<h2 id="store">App store: <code>iotdash store …</code></h2>
+<table>
+<tr><th>คำสั่ง</th><th>ทำอะไร</th></tr>
+<tr><td><code>iotdash store dev [--api | --web]</code></td><td>API (<code>store/backend/run_local.sh</code>, :9310) และเว็บ (Vite, :5310) ในเครื่อง ต้องมี <code>store/backend/.env.local</code> (ติดตั้ง <code>node_modules</code> ให้ครั้งแรก)</td></tr>
+<tr><td><code>iotdash store test</code></td><td>test ของ API (pytest, สร้าง <code>backend/.venv</code> ให้ถ้ายังไม่มี)</td></tr>
+<tr><td><code>iotdash store deploy [--dry-run] [--config FILE]</code></td><td>store ของคุณบน AWS จาก <code>store/deploy.env</code> (<code>store/scripts/deploy.sh</code>)</td></tr>
+<tr><td><code>iotdash store deploy-web [--config FILE]</code></td><td>build เว็บสำหรับ store นั้น (<code>store/scripts/deploy-web.sh</code>)</td></tr>
+</table>
+<p>รายละเอียดใน <a href="../guide/store.html">App store</a></p>
+
+<h2 id="firmware">Firmware: <code>iotdash firmware</code></h2>
+<pre><code>iotdash os build                 <span class="c"># ต้องมี os/build/boot.idb ก่อน (ฝังใน firmware)</span>
+iotdash firmware                 <span class="c"># build (PlatformIO ในโฟลเดอร์ SDK)</span>
+iotdash firmware upload          <span class="c"># build + flash (ไม่ลบ fs/sys/slots/registry)</span>
+iotdash firmware monitor         <span class="c"># 921600 baud</span></code></pre>
+<p>เพิ่ม page buffer เป็น 3 ได้ด้วย <code>build_flags = … -DRGB_PAGES=3</code> ใน <code>platformio.ini</code> (ดู <a href="../core/display.html#pages">การแสดงผล</a>)</p>
+
+<h2 id="legacy">คำสั่งยุคก่อน OS (แอปเดี่ยว)</h2>
+<p>ก่อนมี OS บอร์ดรันแอปเดียวจาก partition <code>bundle</code> คำสั่งชุดนี้อยู่ใต้ <code>iotdash legacy …</code>:</p>
+<table>
+<tr><th>คำสั่ง</th><th>สถานะ</th></tr>
+<tr><td><code>iotdash legacy build APP [-o out] [--ref]</code></td><td>ใช้ได้: compile โฟลเดอร์ใดก็ได้เป็น IDB1 (<code>APP/build/bundle.bin</code>), <code>--ref</code> เก็บภาพ Chromium ไว้ด้วย</td></tr>
+<tr><td><code>iotdash legacy sim APP [--shot] [--script] [--page]</code></td><td>ใช้ได้: เปิด bundle เดี่ยวใน simulator (ไม่มี OS)</td></tr>
+<tr><td><code>iotdash legacy shot APP [--page] [--script]</code></td><td>ใช้ได้: ภาพ sim เทียบกับ Chromium ข้างกัน (<code>APP/build/compare.png</code>)</td></tr>
+<tr><td><code>iotdash legacy dev APP [--commit]</code></td><td><b>ใช้ไม่ได้กับ firmware ปัจจุบัน</b>: บอร์ดตอบ FILE/BUNDLE/COMMIT ว่า "single bundles are gone"</td></tr>
+<tr><td><code>iotdash legacy flash APP [--fw]</code></td><td><b>ห้ามใช้</b>: เขียน bundle ที่ offset 0x400000 ซึ่งตอนนี้คือ partition <code>sys</code> (ทับ system image ใน flash; แก้ได้ด้วย reboot ให้คัดลอกจาก storage ใหม่)</td></tr>
+</table>
+
+<h2 id="sim-binary">Simulator โดยตรง</h2>
+<pre><code>sim/build/iotdash-sim --os os/build/sdcard --boot os/build/boot.idb [--script "…"] [--shot out.png]
+sim/build/iotdash-sim APP/build/bundle.bin [--page x.html] [--script …] [--shot …]   <span class="c"># แอปเดี่ยว</span></code></pre>
+<p>คำสั่งใน script และ environment variable ดูที่ <a href="../tools/simulator.html">Simulator</a> คำสั่งที่เพิ่มมากับ radio ปลอมและงานหน่วยความจำ:</p>
+<table>
+<tr><th>คำสั่ง script</th><th>ทำอะไร</th></tr>
+<tr><td><code>scale KG</code> / <code>scale OL</code></td><td>วางน้ำหนักบนตาชั่ง BLE ปลอม (<code>BLE-Scale-01</code>) / เกินพิกัด</td></tr>
+<tr><td><code>scaleoff</code></td><td>ตาชั่งปลอมหลุดการเชื่อมต่อ</td></tr>
+<tr><td><code>mem [tag]</code></td><td>(macOS) พิมพ์ <code>mem&lt;tag&gt;: N KB in use (js …, fonts …, resident …)</code>: heap ที่ใช้อยู่, JS heap, font ใน RAM, สำเนา resident</td></tr>
+</table>
+<pre><code>iotdash os sim --script "launch calculator; wait 3000; mem first; shot first.png"</code></pre>
+
+<h2 id="recipes">สูตรที่ใช้บ่อย</h2>
+<table>
+<tr><th>งาน</th><th>คำสั่ง</th></tr>
+<tr><td>ตั้งบอร์ดใหม่ทั้งหมด</td><td><code>iotdash os build &amp;&amp; iotdash firmware upload &amp;&amp; iotdash os deploy --to device</code> แล้ว <code>iotdash run --device</code> ในโฟลเดอร์ของแอป</td></tr>
+<tr><td>ให้บอร์ดต่อ Wi-Fi เอง</td><td>ใส่เครือข่ายใน <code>os/core/private/secrets.json</code> แล้ว <code>iotdash os deploy --to device --build</code> หรือ <code>iotdash device wifi "SSID:PASS"</code></td></tr>
+<tr><td>แก้หน้าของระบบ (home/settings/shell)</td><td><code>iotdash os deploy --to device --build</code></td></tr>
+<tr><td>แก้แอป</td><td><code>iotdash run</code> / <code>iotdash run --device</code> ในโฟลเดอร์ของแอป</td></tr>
+<tr><td>ปล่อยเวอร์ชันใหม่ของแอป</td><td>เพิ่ม <code>version</code> ใน <code>app.json</code> แล้ว <code>iotdash publish --store URL --notes "…"</code></td></tr>
+<tr><td>แก้ engine/firmware</td><td><code>iotdash firmware upload</code> (+ ทดสอบใน sim)</td></tr>
+<tr><td>แก้ boot screen</td><td><code>iotdash os build</code> แล้ว <code>iotdash firmware upload</code> (boot image อยู่ใน firmware)</td></tr>
+<tr><td>เปลี่ยน <code>Os::kVersion</code></td><td>ต้อง build ทั้ง OS และ firmware (version อยู่ทั้งสองที่)</td></tr>
+<tr><td>ดูว่าบอร์ดเห็นอะไร</td><td><code>iotdash device shot now.png</code></td></tr>
+<tr><td>เทียบกับ Chromium</td><td><code>iotdash shot</code> ในโฟลเดอร์ของแอป</td></tr>
+</table>
+</main>
+</body>
+</html>

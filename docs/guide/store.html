@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>App store (iotstore) — iotdash docs</title>
+<link rel="stylesheet" href="../assets/docs.css">
+<script src="../assets/nav.js" defer></script>
+</head>
+<body>
+<nav id="sidebar"></nav>
+<main>
+<div class="crumb">คู่มือ</div>
+<h1>App store (iotstore)</h1>
+<p class="lead">store ที่มากับ SDK อยู่ใน <code>store/</code>: นักพัฒนาอัปโหลดแพ็กเกจของแอปและเก็บทุกเวอร์ชัน ลองแต่ละเวอร์ชันบนบอร์ดจำลองในเบราว์เซอร์ ส่วนบอร์ดติดตั้ง อัปเดต และลบแอปจากแอป <b>Apps</b> ใครก็ deploy store ของตัวเองลง AWS ได้ แอปใน store เป็นของผู้ที่ publish</p>
+<div id="toc"></div>
+
+<h2 id="parts">ส่วนประกอบ</h2>
+<table>
+<tr><th>ส่วน</th><th>อยู่ที่</th><th></th></tr>
+<tr><td>API</td><td><code>store/backend/</code></td><td>AWS Lambda (Python 3.13) + DynamoDB (key <code>pk</code> + <code>sk</code>) + S3 รายละเอียดใน <code>store/backend/README.md</code> และ <code>store/docs/API.md</code></td></tr>
+<tr><td>เว็บ</td><td><code>store/frontend/</code></td><td>React + Vite + TypeScript: project, เวอร์ชัน (อัปโหลด, notes, publish, ดาวน์โหลด, ลบ) และหน้า Simulate ที่รัน OS จริงเป็น WebAssembly (<code>web/</code>) พร้อม Wi-Fi, Bluetooth และเกมตาชั่งจำลอง</td></tr>
+<tr><td>Deploy</td><td><code>store/deploy.env</code>, <code>store/scripts/</code></td><td>สร้างหรืออัปเดตทุก resource บน AWS จาก config ไฟล์เดียว</td></tr>
+<tr><td>บนบอร์ด</td><td><code>os/core/apps/store/</code>, <code>lib/rt/os_store.cpp</code></td><td>แอป Apps และการติดตั้งแบบ stream ลงการ์ด (<a href="../concepts/os.html#store">รายละเอียด</a>)</td></tr>
+<tr><td>CLI</td><td><code>tools/storeclient.py</code></td><td><code>iotdash publish</code></td></tr>
+</table>
+<ul>
+  <li><b>อัปโหลด:</b> API ให้ presigned POST ของ S3 เบราว์เซอร์ (หรือ <code>iotdash publish</code>) ส่งไฟล์ตรงเข้า S3 แล้ว API ตรวจแพ็กเกจ (checksum, app id ตรงกับ project, เวอร์ชันใหม่)</li>
+  <li><b>ติดตั้ง:</b> บอร์ดขอ API ได้ presigned GET ของ S3 แล้วโหลดแพ็กเกจจาก S3 เอง</li>
+  <li>บอร์ดเห็นเวอร์ชันล่าสุดที่ publish แล้วและ <code>os.min</code> ไม่ใหม่กว่า OS ของบอร์ด</li>
+</ul>
+
+<h2 id="dev">รันในเครื่อง</h2>
+<pre><code>cp store/backend/.env.example store/backend/.env.local   <span class="c"># ครั้งแรก: JWT_SECRET_KEY, STORAGE (s3 + AWS_PROFILE หรือ local)</span>
+iotdash store dev          <span class="c"># API :9310 + เว็บ :5310 (--api / --web: อย่างเดียว) Ctrl+C หยุดทั้งคู่</span>
+iotdash store test         <span class="c"># test ของ API</span></code></pre>
+<p>บอร์ดในวงเดียวกัน: แอป Apps → <i>Store address</i> → <code>http://&lt;IP ของเครื่อง&gt;:9310</code> บัญชีแรกที่สมัครเป็น admin ของ store</p>
+
+<h2 id="deploy">Deploy store ของตัวเอง</h2>
+<pre><code>cp store/deploy.env.example store/deploy.env   <span class="c"># STORE_NAME, AWS_PROFILE, AWS_REGION, WEB_ORIGIN, SIGNUP …</span>
+iotdash store deploy --dry-run   <span class="c"># ดูว่าจะสร้าง/แก้อะไร (อ่านอย่างเดียว)</span>
+iotdash store deploy             <span class="c"># table, bucket + CORS, role, layer, Lambda, function URL: พิมพ์ URL ของ API</span>
+iotdash store deploy-web         <span class="c"># build เว็บ (และอัปโหลดขึ้น S3 ถ้าตั้ง WEB_BUCKET)</span></code></pre>
+<table>
+<tr><th>สร้าง</th><th>ชื่อ</th></tr>
+<tr><td>DynamoDB</td><td><code>&lt;STORE_NAME&gt;-users</code>, <code>-projects</code>, <code>-versions</code></td></tr>
+<tr><td>S3</td><td><code>S3_BUCKET_NAME</code> หรือ <code>&lt;STORE_NAME&gt;-packages-&lt;account id&gt;</code> (private, CORS ตาม <code>WEB_ORIGIN</code>)</td></tr>
+<tr><td>IAM</td><td><code>&lt;STORE_NAME&gt;-api-role</code></td></tr>
+<tr><td>Lambda</td><td><code>&lt;STORE_NAME&gt;-api</code> + layer <code>&lt;STORE_NAME&gt;-deps</code> + function URL</td></tr>
+</table>
+<ul>
+  <li>รันซ้ำได้: ที่ยังไม่มีจะถูกสร้าง ที่มีแล้วจะถูกอัปเดต (โค้ด, ค่าตั้ง, CORS) โดยเก็บ JWT key เดิม</li>
+  <li>หลาย store ในบัญชีเดียว: config คนละไฟล์ที่ <code>STORE_NAME</code> ต่างกัน <code>iotdash store deploy --config staging.env</code></li>
+  <li>เว็บเป็นไฟล์ static (<code>store/frontend/dist</code>) host ที่ไหนก็ได้: path ที่ไม่มีต้องกลับไป <code>index.html</code> และ <code>.wasm</code> ต้องเป็น <code>application/wasm</code></li>
+  <li><code>SIGNUP=closed</code>: สมัครได้เฉพาะบัญชีแรก (admin)</li>
+</ul>
+
+<h2 id="publish">ส่งแอปขึ้น store</h2>
+<pre><code>cd my-app
+iotdash pack                     <span class="c"># build/my-app-1.0.idbz: อัปโหลดในหน้า project ของเว็บ หรือ</span>
+IOTSTORE_URL=https://&lt;API&gt; IOTSTORE_EMAIL=me@example.com iotdash publish --notes "อะไรเปลี่ยน"</code></pre>
+</main>
+</body>
+</html>

@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ภาพรวม iotdash — iotdash docs</title>
+<link rel="stylesheet" href="assets/docs.css">
+<script src="assets/nav.js" defer></script>
+</head>
+<body>
+<nav id="sidebar"></nav>
+<main>
+<div class="crumb">iotdash docs</div>
+<h1>iotdash</h1>
+<p class="lead">ระบบปฏิบัติการขนาดเล็กสำหรับจอสัมผัส 7 นิ้ว (Waveshare ESP32-S3-Touch-LCD-7) ที่ให้เขียนแอปด้วย HTML, CSS และ JavaScript แล้ว compile เป็น image ไปรันบนบอร์ดโดยตรง ไม่มีเบราว์เซอร์อยู่ข้างใน</p>
+
+<div id="toc"></div>
+
+<h2>iotdash คืออะไร</h2>
+<p>iotdash ประกอบด้วยสามส่วนที่ทำงานร่วมกัน:</p>
+<ul>
+  <li><b>Firmware (C++)</b> บน ESP32-S3: driver ของจอ RGB, touch, storage, ช่องสื่อสารกับคอมพิวเตอร์ (dev link) และ task ต่าง ๆ</li>
+  <li><b>Rendering engine <code>lib/rt</code></b>: ตัวแปล HTML/CSS เป็นภาพ (style, layout, paint) พร้อม JavaScript engine (QuickJS) ใช้ซอร์สชุดเดียวกันทั้งบนบอร์ดและใน simulator บน Mac</li>
+  <li><b>iotdash OS</b>: ชั้นระบบปฏิบัติการบน engine มีหน้าจอ boot, home screen, แอปตั้งค่า, ระบบติดตั้งแอป, registry, หน่วยความจำของแอป, ไฟล์, background process, Wi-Fi/Bluetooth และแถบระบบด้านล่าง (home/back)</li>
+</ul>
+<p>แอปเขียนเป็นเว็บธรรมดาในโฟลเดอร์ของตัวเองที่ไหนก็ได้ (<code>iotdash create</code>) เครื่องมือบนคอมพิวเตอร์ (<code>tools/</code>) จะเปิดแต่ละหน้าใน Chromium เพื่อวัดว่าใช้ฟอนต์ขนาดไหนบ้าง แล้ว render ฟอนต์ แปลงรูป และแพ็กทุกอย่างเป็นไฟล์ <code>app.idb</code> ไฟล์เดียว ก่อนส่งผ่าน USB ไปติดตั้งบนบอร์ด</p>
+
+<h2>สถานะปัจจุบัน</h2>
+<div class="facts">
+  <div class="fact"><div class="v">0.1.0</div><div class="k">OS version (<code>Os::kVersion</code>)</div></div>
+  <div class="fact"><div class="v">800×480</div><div class="k">RGB565, 39 Hz, 2 page buffers</div></div>
+  <div class="fact"><div class="v">16 MB / 8 MB</div><div class="k">flash / PSRAM (ESP32-S3-WROOM-1-N16R8)</div></div>
+  <div class="fact"><div class="v">tear = 0</div><div class="k">ทุกขั้นตอนที่ทดสอบ (เปิดแอป, เปลี่ยนหน้า, แถบระบบ, dark mode)</div></div>
+  <div class="fact"><div class="v">~31 ms</div><div class="k">ต่อการกดปุ่มใน Calculator (style 4 + layout 2 + paint 25)</div></div>
+  <div class="fact"><div class="v">Internal flash</div><div class="k">storage ปัจจุบัน (ช่อง SD ของบอร์ดตัวนี้เสียทาง hardware)</div></div>
+  <div class="fact"><div class="v">Wi-Fi + BLE</div><div class="k">Settings → Connection, <code>os.wifi</code> / <code>os.bt</code>, HTTPS</div></div>
+  <div class="fact"><div class="v">SDK</div><div class="k"><code>iotdash create / run / pack</code>: แอปเป็นโปรเจกต์ที่ไหนก็ได้</div></div>
+</div>
+<div class="warn">
+  <p><b>บอร์ดตัวที่ใช้พัฒนา:</b> ช่องใส่ microSD ไม่สัมผัสการ์ด ยืนยันแล้วด้วย firmware ทดสอบของ Waveshare เอง ระบบจึงใช้ file system ใน flash (LittleFS, 5.2 MB) แทน SD โดยอัตโนมัติ ดู <a href="core/memory-storage.html">หน่วยความจำและ storage</a> และ <a href="project/known-issues.html">ข้อจำกัด</a></p>
+</div>
+
+<h2>แผนที่ของเอกสาร</h2>
+<h3>แนวคิดหลัก</h3>
+<div class="cards">
+  <a class="card" href="concepts/architecture.html"><div class="t">สถาปัตยกรรมระบบ</div><div class="d">ชั้นต่าง ๆ ตั้งแต่ hardware ถึงแอป, runtime 4 layer (scan-out / สร้างเฟรม / input / app), งานบนแต่ละ core</div></a>
+  <a class="card" href="concepts/os.html"><div class="t">iotdash OS</div><div class="d">ลำดับการ boot, home, วงจรชีวิตแอป, navigation stack, แถบระบบ, dialog, registry, สิทธิ์ของแอป</div></a>
+</div>
+<h3>แกนระบบ</h3>
+<div class="cards">
+  <a class="card" href="core/hardware.html"><div class="t">ฮาร์ดแวร์และ flash</div><div class="d">ขา GPIO, CH422G, partition table, sdkconfig, ช่อง SD</div></a>
+  <a class="card" href="core/display.html"><div class="t">การแสดงผล</div><div class="d">bounce buffer, fill DMA, page flip, transition, DMA priority และสาเหตุของ glitch ที่แก้ไปแล้ว</div></a>
+  <a class="card" href="core/memory-storage.html"><div class="t">หน่วยความจำและ storage</div><div class="d">PSRAM budget, image source (ไม่ map flash), ฟอนต์ใน RAM, SD / LittleFS, flash slot</div></a>
+  <a class="card" href="core/engine.html"><div class="t">Rendering engine</div><div class="d">style, layout (partial relayout), paint แบบแถบ 2 core, damage tracking, ฟอนต์และภาษาไทย</div></a>
+  <a class="card" href="core/js-runtime.html"><div class="t">JavaScript runtime</div><div class="d">QuickJS, context ต่อหน้า, scope, background process, งบเวลา, watchdog</div></a>
+  <a class="card" href="core/input.html"><div class="t">Touch และ input</div><div class="d">touch task, คิว event, gesture ของระบบ, การสร้าง click, log ของ input</div></a>
+  <a class="card" href="core/connectivity.html"><div class="t">Wi-Fi และ Bluetooth</div><div class="d">ชั้นของ radio, เครือข่ายที่บันทึก, ต่ออัตโนมัติ, ตรวจอินเทอร์เน็ต, <code>secrets.json</code>, BLE central, radio ปลอมใน sim</div></a>
+</div>
+<h3>คู่มือและอ้างอิง</h3>
+<div class="cards">
+  <a class="card" href="guide/getting-started.html"><div class="t">ติดตั้งและใช้งานครั้งแรก</div><div class="d">เตรียมเครื่อง, flash firmware, deploy OS, ติดตั้งแอป, ใช้ simulator</div></a>
+  <a class="card" href="guide/app-development.html"><div class="t">เขียนแอป</div><div class="d">โครงสร้างโฟลเดอร์, หน้าและ navigation, ไฟล์, หน่วยความจำ, ข้อแนะนำเรื่องความเร็ว</div></a>
+  <a class="card" href="guide/store.html"><div class="t">App store (iotstore)</div><div class="d">store ที่มากับ SDK: รันในเครื่อง, deploy ลง AWS ของตัวเอง, ส่งแอปขึ้น store</div></a>
+  <a class="card" href="reference/js-api.html"><div class="t">JavaScript API ของ OS</div><div class="d"><code>navigate</code>, <code>setBackgroundProcess</code>, <code>open</code>, <code>fs</code>, <code>registry</code>, <code>os.*</code>, <code>os.wifi</code>, <code>os.bt</code></div></a>
+  <a class="card" href="reference/cli.html"><div class="t">Command line</div><div class="d"><code>iotdash create/run/build/pack/install/publish</code>, <code>os</code>, <code>firmware</code>, <code>device</code></div></a>
+  <a class="card" href="reference/devlink.html"><div class="t">Dev link และคำสั่งบนบอร์ด</div><div class="d">โปรโตคอล frame ผ่าน USB และคำสั่งข้อความสำหรับ debug</div></a>
+  <a class="card" href="reference/file-formats.html"><div class="t">Format ไฟล์</div><div class="d">IDB, FNT1, IMG1, slot header, layout ของ card และ partition</div></a>
+  <a class="card" href="tools/simulator.html"><div class="t">Simulator</div><div class="d">รัน OS บน Mac, script ทดสอบ, ตัวตรวจ damage/layout, ASAN</div></a>
+  <a class="card" href="tools/debugging.html"><div class="t">วัดผลและ debug</div><div class="d">บรรทัด stats, tear, timeline, input log, ทดสอบบัส, probe ขา SD</div></a>
+  <a class="card" href="project/changelog.html"><div class="t">ประวัติการพัฒนา</div><div class="d">สิ่งที่ทำ ปัญหาที่เจอ และเหตุผลของแต่ละการตัดสินใจ</div></a>
+  <a class="card" href="project/known-issues.html"><div class="t">ข้อจำกัดและงานที่ค้าง</div><div class="d">สิ่งที่รู้ว่ายังไม่สมบูรณ์ และข้อเสนอที่รอตัดสินใจ</div></a>
+</div>
+
+<h2>คำสั่งที่ใช้บ่อย</h2>
+<p>รันจากโฟลเดอร์ <code>iotdash/</code> ทุกคำสั่ง (รายละเอียดใน <a href="reference/cli.html">command line</a>)</p>
+<pre><code><span class="c"># firmware: build แล้ว flash ผ่าน USB (ช่อง UART)</span>
+~/.platformio/penv/bin/pio run -t upload
+
+<span class="c"># OS: build ภาพระบบจาก os/core แล้วส่งลง storage ของบอร์ด</span>
+iotdash os deploy --build --to device
+
+<span class="c"># แอป: build แล้วติดตั้ง / ถอนออก ผ่าน USB</span>
+iotdash create hello &amp;&amp; cd hello
+iotdash run                      <span class="c"># simulator</span>
+iotdash run --device             <span class="c"># บอร์ด</span>
+iotdash uninstall --to device
+
+<span class="c"># ทดสอบบน Mac ด้วย simulator (ใช้การ์ดจำลองใน os/build/sdcard)</span>
+iotdash os sim
+
+<span class="c"># ภาพหน้าจอจากบอร์ด, สถิติ, รัน JS บนบอร์ด</span>
+iotdash device shot
+iotdash device stats
+iotdash device eval "os.page()"</code></pre>
+
+<h2>โครงสร้าง repository</h2>
+<div class="table-wrap"><table>
+  <tr><th>โฟลเดอร์</th><th>เนื้อหา</th></tr>
+  <tr><td><code>src/</code></td><td>firmware เฉพาะบอร์ด: <code>main.cpp</code> (platform, task, dev link handler, fetch worker), <code>radio.*</code> (Wi-Fi + BLE), <code>rgb_display.*</code>, <code>dma_blit.*</code>, <code>sdcard.*</code>, <code>imageslot.*</code>, <code>devlink.*</code>, <code>gt911.h</code>, <code>ch422g.h</code>, <code>board.h</code></td></tr>
+  <tr><td><code>lib/rt/</code></td><td>rendering engine และ OS kernel (portable C++17): DOM, CSS, style, layout, render, raster, font, JS host, OS (<code>os_net.cpp</code> = policy ของ Wi-Fi/Bluetooth)</td></tr>
+  <tr><td><code>lib/quickjs/</code></td><td>QuickJS-ng (JavaScript engine)</td></tr>
+  <tr><td><code>os/core/</code></td><td>ซอร์สของระบบ: <code>os.js</code> (JS API), <code>theme.css</code>, <code>shell/</code> (แถบระบบและ dialog), <code>home/</code>, <code>boot/</code>, <code>apps/settings/</code>, <code>assets/</code>, <code>private/secrets.json</code> (Wi-Fi ที่ติดมากับระบบ, ไม่อยู่ใน git)</td></tr>
+  <tr><td><code>bin/iotdash</code></td><td>command line ของ SDK (ใส่ <code>bin/</code> ใน PATH), <code>scripts/setup.sh</code> ติดตั้งครั้งแรก</td></tr>
+  <tr><td><code>templates/app/</code></td><td>template ของ <code>iotdash create</code></td></tr>
+  <tr><td><code>examples/</code></td><td>แอปตัวอย่าง (<code>calculator</code>, <code>dashboard</code>, <code>jstest</code>): <code>iotdash run calculator</code></td></tr>
+  <tr><td><code>store/</code></td><td>app store ที่ host เองได้: <code>backend/</code> (Lambda + DynamoDB + S3), <code>frontend/</code> (React + Vite), <code>scripts/deploy*.sh</code> (<a href="guide/store.html">คู่มือ</a>)</td></tr>
+  <tr><td><code>web/</code></td><td>engine + OS เป็น WebAssembly (<code>web/build.sh</code>) สำหรับ <code>iotdash run --web</code> และ simulator ของ iotstore</td></tr>
+  <tr><td><code>os/build/</code></td><td>ผลการ build (ไม่เก็บใน git): <code>boot.idb</code>, <code>card/</code>, <code>sdcard/</code> (การ์ดของ simulator), <code>system-fonts.json</code></td></tr>
+  <tr><td><code>sim/</code></td><td>simulator บน desktop (<code>main.cpp</code>, <code>fake_radio.h</code>, CMake)</td></tr>
+  <tr><td><code>tools/</code></td><td><code>iotdash.py</code> (CLI, compiler, dev link), <code>project.py</code> (คำสั่งของโปรเจกต์แอป), <code>osbuild.py</code> (build OS/แอป, card, Chromium reference), <code>idbz.py</code>, <code>storeclient.py</code>, <code>requirements.txt</code></td></tr>
+  <tr><td><code>docs/</code></td><td>เอกสารชุดนี้</td></tr>
+</table></div>
+<div class="note"><p><code>README.md</code> ที่ root ของ <code>iotdash/</code> เขียนไว้ตั้งแต่ยังเป็น benchmark ของจอ (ก่อนมี engine และ OS) ข้อมูลหลายจุดในนั้นเก่าแล้ว ให้ถือเอกสารชุดนี้เป็นหลัก</p></div>
+</main>
+</body>
+</html>

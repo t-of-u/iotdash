@@ -1,0 +1,81 @@
+/* System UI drawn over every page: the bottom bar (swipe up from the bottom edge), the system
+   dialog and the "opening app" card. The OS toggles classes on .os-shell:
+   nav-open, modal-open, launching, no-cancel. */
+
+.os-shell {
+  position: fixed; left: 0; top: 0; width: 100vw; height: 100vh; z-index: 2147483000;
+  pointer-events: none; font-family: Inter, sans-serif; color: #0f172a;
+}
+
+/* ---- bottom bar: home (left), back (right) */
+.os-bar {
+  position: absolute; left: 0; right: 0; bottom: 0; height: 88px;
+  display: flex; align-items: center; justify-content: space-between; padding: 0 26px;
+  opacity: 0; transform: translateY(28px);
+  transition: opacity .18s ease-out, transform .22s ease-out;
+}
+.nav-open .os-bar { opacity: 1; transform: translateY(0); }
+.os-key {
+  width: 60px; height: 60px; border-radius: 30px;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(15, 23, 42, .38); color: #fff;
+  box-shadow: 0 6px 18px rgba(15, 23, 42, .25);
+}
+.nav-open .os-key { pointer-events: auto; }
+.os-key svg { fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
+
+/* ---- system dialog */
+.os-modal {
+  position: absolute; left: 0; top: 0; right: 0; bottom: 0;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(15, 23, 42, .45); opacity: 0; transition: opacity .16s ease-out;
+}
+.modal-open .os-modal { opacity: 1; pointer-events: auto; }
+.os-dialog {
+  width: 380px; padding: 22px 22px 18px; border-radius: 20px; background: #fff;
+  box-shadow: 0 24px 60px rgba(15, 23, 42, .35);
+  transform: scale(.94); transition: transform .18s ease-out;
+}
+.modal-open .os-dialog { transform: scale(1); }
+.os-title { font-size: 20px; font-weight: 600; margin-bottom: 8px; }
+.os-message { font-size: 16px; line-height: 1.45; color: #475569; }
+.os-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px; }
+.os-btn {
+  min-width: 96px; height: 44px; padding: 0 18px; border-radius: 12px;
+  display: flex; align-items: center; justify-content: center; font-size: 16px; font-weight: 600;
+}
+.os-cancel { background: #e2e8f0; color: #0f172a; }
+.os-ok { background: #2563eb; color: #fff; }
+.no-cancel .os-cancel { display: none; }
+
+/* ---- opening an app */
+.os-launch {
+  position: absolute; left: 0; top: 0; right: 0; bottom: 0;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(15, 23, 42, .3); opacity: 0; transition: opacity .15s;
+}
+.launching .os-launch { opacity: 1; pointer-events: auto; }
+.os-launch-card {
+  width: 260px; padding: 22px; border-radius: 20px; background: #fff;
+  display: flex; flex-direction: column; align-items: center; gap: 12px;
+  box-shadow: 0 24px 60px rgba(15, 23, 42, .3);
+}
+.os-spinner {
+  width: 34px; height: 34px; border-radius: 50%;
+  border: 4px solid #dbeafe; border-top-color: #2563eb;
+}
+.launching .os-spinner { animation: os-spin .8s linear infinite; }  /* only while visible */
+@keyframes os-spin { to { transform: rotate(360deg); } }
+.os-launch-label { font-size: 16px; font-weight: 600; }
+.os-launch-track { width: 100%; height: 6px; border-radius: 3px; background: #e2e8f0; overflow: hidden; }
+.os-launch-bar { width: 0; height: 100%; border-radius: 3px; background: #2563eb; }
+
+@media (prefers-color-scheme: dark) {
+  .os-shell { color: #e2e8f0; }
+  .os-key { background: rgba(226, 232, 240, .22); }
+  .os-dialog, .os-launch-card { background: #1e293b; }
+  .os-message { color: #94a3b8; }
+  .os-cancel { background: #334155; color: #e2e8f0; }
+  .os-modal { background: rgba(2, 6, 23, .6); }
+  .os-launch-track { background: #334155; }
+}

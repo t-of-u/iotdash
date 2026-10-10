@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>การวัดผลและ debug — iotdash docs</title>
+<link rel="stylesheet" href="../assets/docs.css">
+<script src="../assets/nav.js" defer></script>
+</head>
+<body>
+<nav id="sidebar"></nav>
+<main>
+<div class="crumb">เครื่องมือและการ debug</div>
+<h1>การวัดผลและ debug</h1>
+<p class="lead">วิธีอ่านตัวเลขของบอร์ด, เครื่องมือหา glitch, ความช้า, หน่วยความจำรั่ว, ปัญหา input และฮาร์ดแวร์ พร้อมกรณีศึกษาจริงที่ใช้เครื่องมือเหล่านี้</p>
+<div id="toc"></div>
+
+<h2 id="principles">หลักการ</h2>
+<ul>
+  <li><b>วัดบนบอร์ด</b> สำหรับเรื่องเวลา, glitch และหน่วยความจำ simulator ใช้ตรวจความถูกต้อง (ภาพ, layout, memory safety)</li>
+  <li><b>ตัววัดต้องตรงกับสิ่งที่ตาเห็น</b>: <code>late</code> เคยเป็น 0 ขณะที่ยังเห็น glitch จึงสร้าง <code>tears</code> ขึ้นมาแทน ก่อนสรุปว่าแก้แล้ว ให้ยืนยันว่าตัววัดจับอาการนั้นได้จริงก่อนแก้</li>
+  <li><b>ติดป้ายเหตุการณ์</b>: ทุก tear บอก phase ของ engine ทำให้รู้ว่าต้องไปดูส่วนไหน</li>
+  <li><b>ให้ผู้ใช้ยืนยันด้วยมือจริง</b>: การแตะผ่าน USB ไม่ได้ผ่าน GT911 และไม่เห็นภาพบนจอ</li>
+</ul>
+
+<h2 id="stats">บรรทัด stats</h2>
+<p>ได้จาก <code>iotdash.py device stats</code>, คำสั่ง text <code>s</code> หรือ log อัตโนมัติทุก 10 วินาที ค่าเกี่ยวกับเฟรมเป็นของ<b>เฟรมล่าสุด</b> ค่าตัวนับสะสมตั้งแต่ <code>z</code></p>
+<table>
+<tr><th>ช่อง</th><th>ความหมาย</th><th>ค่าที่ดี</th></tr>
+<tr><td><code>fps</code></td><td>เฟรมที่วาดต่อวินาที (0 เมื่อหน้านิ่ง)</td><td>–</td></tr>
+<tr><td><code>frame X ms</code></td><td>เวลาทั้งเฟรม</td><td>&lt; 25 ms ถ้าอยากได้ทุกรอบจอ</td></tr>
+<tr><td><code>style X [N el]</code></td><td>เวลา restyle และจำนวน element ที่ถูก restyle</td><td>N เล็ก (กดปุ่ม = หลักหน่วย)</td></tr>
+<tr><td><code>layout X [full|part]</code></td><td>เวลา layout และเป็น partial หรือทั้งหน้า</td><td><code>part</code> สำหรับการเปลี่ยนเล็กๆ</td></tr>
+<tr><td><code>paint X</code></td><td>เวลาวาด (รวม blit)</td><td>สัมพันธ์กับ damage</td></tr>
+<tr><td><code>damage N px</code></td><td>พื้นที่ที่วาด (รวมของเฟรมก่อนเพราะ 2 buffer)</td><td>เล็กเท่าที่เปลี่ยนจริง</td></tr>
+<tr><td><code>lcd X Hz</code></td><td>refresh จริงที่วัดจาก VSYNC</td><td>~39</td></tr>
+<tr><td><code>late</code></td><td>ISR ใช้เวลานานกว่างบ (ทาง CPU copy)</td><td>0</td></tr>
+<tr><td><code>fill avg / max / budget us</code></td><td>เวลาใน ISR เทียบกับงบ (~615 µs ต่อ bounce buffer 12 แถว)</td><td>max ≪ budget</td></tr>
+<tr><td><code>dmafb</code></td><td>ครั้งที่ fill DMA ไม่ว่างนานเกิน 250 µs แล้วถอยไปใช้ CPU</td><td>0</td></tr>
+<tr><td><code>sram / psram KB</code></td><td>หน่วยความจำ<b>ที่ว่าง</b></td><td>PSRAM &gt; ~300 KB</td></tr>
+<tr><td><code>js KB</code></td><td>heap ของ QuickJS</td><td>–</td></tr>
+<tr><td><code>fonts-in-ram KB</code></td><td>สำเนา font + รูปที่ engine ถือไว้</td><td>–</td></tr>
+<tr><td><code>tears N (phase n, …, with blit, oldest refill)</code></td><td>ดู <a href="../core/display.html#tear">ตัววัด tear</a></td><td><b>0</b></td></tr>
+<tr><td><code>isr core / late max / &gt;200us / back-to-back / dma isr max</code></td><td>ความตรงเวลาของ interrupt ของจอ</td><td>core 0, &gt;200us = 0</td></tr>
+</table>
+
+<h2 id="glitch">หา glitch ของจอ</h2>
+<ol>
+  <li><code>z</code> reset ตัวนับ แล้วทำสิ่งที่เห็น glitch (หรือใช้ <code>f</code> วาดเต็มจอ 3 วินาที)</li>
+  <li><code>s</code> ดู <code>tears</code> และ phase ที่เกิด:
+    <ul>
+      <li><code>load</code>/<code>io</code>: การอ่าน flash/storage ไม่ถูก pace</li>
+      <li><code>paint</code> + <code>with blit</code> สูง: blitter แย่ง bus (ดู <code>waitBusWindow</code>, <code>R&lt;MB/s&gt;</code>)</li>
+      <li><code>idle</code>: ไม่ใช่งานของ engine (driver, DMA priority, interrupt มาช้า)</li>
+    </ul>
+  </li>
+  <li><code>Tarm</code> แล้วทำซ้ำ จากนั้น <code>T</code> ดู timeline รอบ tear แรก: ระยะห่างระหว่าง fill (ควรใกล้ ~615 µs), VSYNC อยู่ตรงไหน, ตัวไหน <code>busy</code>/<code>TEAR</code></li>
+  <li>ทดสอบ bus โดยตรง: <code>F</code> (อ่าน flash 2 วินาที) เทียบ <code>Q</code> (อ่าน PSRAM) ถ้า <code>F</code> ทำให้ dmafb/late ขึ้น แปลว่าการอ่าน flash ใดๆ ระหว่างแสดงผลเป็นปัญหา</li>
+  <li>ถ่ายภาพหน้าจอแบบ <code>SHOT "s"</code> (page ที่กำลัง scan) เทียบกับภาพปกติ เพื่อแยกว่าภาพใน buffer ผิด (ปัญหา engine, ตรวจด้วย <code>IOTDASH_DAMAGECHECK</code>) หรือภาพถูกแต่ส่งออกจอผิด (ปัญหา scan-out)</li>
+</ol>
+
+<h2 id="slow">หาความช้า</h2>
+<ul>
+  <li>ดู stats หลังการกระทำ: ส่วนไหนกินเวลา (style/layout/paint) และ <code>[N el]</code>, <code>[full]</code></li>
+  <li>style สูง + N มาก: selector ที่ทำให้ restyle กว้าง (ใช้ <code>RT_STYLE_DEBUG=1</code> ใน sim ดู flag sibling/state-on-ancestors)</li>
+  <li>layout <code>[full]</code>: element ที่เปลี่ยนไม่มี relayout boundary (ทำให้ขนาดตายตัว)</li>
+  <li>paint สูง: damage ใหญ่, shadow, transform, รูปขนาดใหญ่</li>
+  <li><code>P</code>: profile ตาม section บนบอร์ด 3 วินาที (รวม helper busy/engine waited ของการวาดสองคอร์)</li>
+  <li><code>M</code>: micro-benchmark ของ primitive; <code>m</code>: เปิด/ปิดการวาดสองคอร์เพื่อเทียบ</li>
+  <li>ใน sim: <code>prof</code> … <code>prof</code>, <code>bench</code>, <code>relayout</code>, <code>RT_WANT_DEBUG=1</code> (ทำไมยังวาดอยู่), <code>spincheck</code></li>
+</ul>
+
+<h2 id="memory">หน่วยความจำ</h2>
+<ul>
+  <li>ดู <code>psram KB</code> (ว่าง) ซ้ำๆ ขณะทำการกระทำเดิมหลายรอบ: ถ้าลดลงเรื่อยๆ คือรั่วหรือ cache ไม่มีขอบเขต</li>
+  <li><code>js KB</code> โตตามจำนวนหน้า = realm เก่ายังถูกอ้างถึง (APP process)</li>
+  <li><code>fonts-in-ram</code> โตแล้วไม่ลดหลังเปลี่ยนแอป = สำเนาไม่ถูก collect</li>
+  <li>ASAN build ใน sim สำหรับ use-after-free/overflow</li>
+  <li>คำสั่ง text <code>heap</code> บนบอร์ด: SRAM ภายในที่ว่าง/ต่ำสุด และ stack ที่เหลือของแต่ละ task (ใช้เมื่อ Wi-Fi/Bluetooth เปิดไม่ได้หรือจะเพิ่มสิ่งที่อยู่ใน SRAM)</li>
+  <li>ใน sim: <code>mem [tag]</code> ระหว่างแต่ละหน้าจอใน script, <code>IOTDASH_SLOWMEM=1</code> ให้ font/รูปถูกคัดลอกแบบบอร์ด, และบน macOS <code>MallocStackLogging=1</code> + <code>malloc_history PID -allBySize</code> ที่สองจุดเวลา (ใช้ <code>sleep</code> ใน script) แล้วเทียบตาม frame ของ <code>rt::</code> ว่าใครจองเพิ่ม</li>
+  <li>บอร์ด reset เอง: ดู <code>device log</code> ตั้งแต่ boot (บรรทัดแรกบอก sram/psram ตอนเริ่ม และสาเหตุ reset)</li>
+</ul>
+
+<h2 id="input">Input</h2>
+<p><code>ilog</code> เปิด log ของ input (ดู <a href="../core/input.html#debug">Touch และ input</a>) แยกได้ว่า: touch มาช้า (sampled … ago), ไปโดน element ไหน, OS รับไปหรือไม่ (<code>-&gt; system</code>), คลิกถูกยกเลิกเพราะอะไร</p>
+
+<h2 id="hardware">ฮาร์ดแวร์</h2>
+<ul>
+  <li><code>device probe</code> วัดแรงดันด้วยสายจาก J8 ขา 3 (GPIO6) พร้อมสั่งสาย SD ให้อยู่ในสถานะที่ต้องการ (<code>cs0</code>, <code>sck1</code>, <code>mosiz</code>, …)</li>
+  <li><code>sd</code> ส่ง CMD0 แบบดิบและอ่าน byte กลับ</li>
+  <li>เทียบกับ firmware ทางการของผู้ผลิต: ถ้าพังเหมือนกัน ปัญหาไม่ใช่โค้ดของเรา</li>
+</ul>
+
+<h2 id="cases">กรณีศึกษา</h2>
+<h3>1. Glitch ทั้งระบบหลังย้ายไป flash</h3>
+<table>
+<tr><th>ขั้น</th><th>สิ่งที่พบ</th></tr>
+<tr><td>อาการ</td><td>ภาพ/ตัวอักษรเพี้ยนเป็นแถบ, ตอนปัดแถบล่าง, เปลี่ยนหน้า, เริ่มใหม่</td></tr>
+<tr><td>ตรวจภาพ</td><td>damagecheck ใน sim ผ่าน: ภาพใน buffer ถูก ปัญหาอยู่ที่การส่งออกจอ</td></tr>
+<tr><td>ทดลอง</td><td><code>F</code> = 1170 late ใน 2 วินาที, <code>Q</code> = 0 → การอ่าน flash แย่ง bus</td></tr>
+<tr><td>แก้รอบแรก</td><td>font/รูปเข้า RAM, อ่านไฟล์แบบ pace → late = 0 แต่ผู้ใช้ยังเห็น glitch</td></tr>
+<tr><td>บทเรียน</td><td><code>late</code> วัดผิดสิ่ง สร้าง <code>tears</code> (owner bit ของ descriptor) + timeline</td></tr>
+<tr><td>สาเหตุที่สอง</td><td>timeline แสดงการเติมผิด buffer หลัง VSYNC → <code>RESTART_IN_VSYNC</code> ของ driver + priority ของ DMA จอ</td></tr>
+<tr><td>ผล</td><td>tears 0 ทุกสถานการณ์ (เดิม 12–14 ครั้ง/3 วินาทีตอนวาดหนัก)</td></tr>
+</table>
+
+<h3>2. Calculator "กดไม่ติด" หลังเปลี่ยนหน้า</h3>
+<table>
+<tr><th>ขั้น</th><th>สิ่งที่พบ</th></tr>
+<tr><td>สมมติฐานแรก</td><td>cache หรือ navigation ผิด</td></tr>
+<tr><td><code>ilog</code> จากนิ้วจริง</td><td>ทุกการกดถึงแอป (<code>click</code> ครบ) แต่ต่อคิวนาน</td></tr>
+<tr><td>stats</td><td>~130 ms ต่อการกด: style 49–74 ms (59–73 el), layout 24–39 ms <code>[full]</code></td></tr>
+<tr><td>สาเหตุ</td><td><code>:active</code> mark subtree ของบรรพบุรุษทุกชั้น + เทียบ custom property ด้วย pointer; flex/grid ไม่มี relayout boundary</td></tr>
+<tr><td>ผล</td><td>~31 ms ต่อการกด (style 4 ms/4 el, layout 2 ms <code>[part]</code>)</td></tr>
+</table>
+
+<h3>3. PSRAM ลดลงทุกครั้งที่ใช้แถบล่าง</h3>
+<p>stats แสดง PSRAM ว่างลด ~100 KB ต่อการเปิดแถบ จนเหลือ 14 KB สาเหตุ: shadow ของปุ่มในแถบที่ fade สร้าง mask ใหม่ทุกค่า alpha และ cache ไม่มีขอบเขต แก้ด้วย LRU 96 KB + quantize alpha ทำให้ต่ำสุดคงที่ ~480 KB</p>
+
+<h3>4. ข้อความใน Settings เยื้องขึ้น</h3>
+<p>ใช้ <code>os ref</code> ให้ Chromium วาดหน้าเดียวกัน แล้วเทียบกับ <code>device shot</code> พบว่าแถว flex ที่มี <code>min-height</code> จัดกลางผิด (~12 px) เป็น bug ของ engine (Flexbox §9.4 ขั้น 8) ไม่ใช่ HTML แก้ที่ engine จึงถูกทุกแอป</p>
+
+<h3>5. SD card อ่านไม่ได้</h3>
+<p>ไล่จากซอฟต์แวร์ไปฮาร์ดแวร์: ตรวจคำสั่ง CH422G เทียบ demo ของผู้ผลิต → อ่านระดับขากลับจากชิป → วัดแรงดันทุกขาในช่องด้วย probe → รัน firmware ทางการซึ่งล้มเหลวเหมือนกัน สรุปว่าหน้าสัมผัสของช่องเสีย (ดู <a href="../core/hardware.html#sd-fault">ฮาร์ดแวร์</a>)</p>
+
+<h3>6. แอปตาชั่ง ทำ PSRAM หมด</h3>
+<table>
+<tr><th>ขั้น</th><th>สิ่งที่พบ</th></tr>
+<tr><td>อาการ</td><td>หน้าแรกของ แอปตาชั่ง เหลือ PSRAM 15 KB แล้วบอร์ด crash</td></tr>
+<tr><td>แยกต้นทุนต่อหน้า (บอร์ด)</td><td>CSS ≈600 KB จาก CSS 34 KB, JS context ≈690 KB, script ≈440 KB, การวาดครั้งแรก ≈450 KB (font ≈290 KB)</td></tr>
+<tr><td>หาเจ้าของ (sim)</td><td><code>mem</code> ระหว่างหน้าจอ + <code>malloc_history</code> สองจุดเวลา: source ของ function ถูกเก็บซ้ำ, stylesheet ถูก parse ซ้ำทุก <code>&lt;link&gt;</code>, <code>Value</code> ใหญ่, element ที่ถอดยังถือ computed style, font ไม่ถูกปล่อย, และวนจอแล้วโตเรื่อยๆ จาก wrapper ใน cycle ที่ GC ไม่ทำงาน</td></tr>
+<tr><td>ตรวจว่าไม่เปลี่ยนภาพ</td><td>เทียบภาพ sim ก่อน/หลังทุกหน้า (ต้องเหมือนทุก pixel) + ASAN</td></tr>
+<tr><td>ผล</td><td>หน้าแรก ≈850–960 KB, ทั้ง flow ≈465 KB คงที่ 20 รอบ (ดู <a href="../core/memory-storage.html#diet">หน่วยความจำ</a>)</td></tr>
+</table>
+</main>
+</body>
+</html>
