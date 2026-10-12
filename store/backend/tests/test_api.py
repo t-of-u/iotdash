@@ -220,17 +220,44 @@ def test_s3_storage(api, package, monkeypatch):
 
 
 def test_items_are_keyed_pk_sk(api, package):
+    """Only pk + sk, no secondary indexes: lookups go through pointer items."""
     from IOTStore.libs import tables
 
     tok, user = register(api, "keys@x.io")
     p = api.ok("POST", "/api/projects", {"app_id": "calculator", "name": "Calculator"}, token=tok)
     vid, _ = upload(api, p["id"], package, token=tok)
     for kind in tables.KINDS:
-        schema = tables.resource().meta.client.describe_table(TableName=tables.name(kind))["Table"]["KeySchema"]
-        assert [(k["AttributeName"], k["KeyType"]) for k in schema] == [("pk", "HASH"), ("sk", "RANGE")]
-    assert tables.table("users").get_item(Key={"pk": f"USER#{user['id']}", "sk": "PROFILE"})["Item"]["email"] == "keys@x.io"
-    assert tables.table("projects").get_item(Key={"pk": f"PROJECT#{p['id']}", "sk": "META"})["Item"]["app_id"] == "calculator"
+        t = tables.resource().meta.client.describe_table(TableName=tables.name(kind))["Table"]
+        assert [(k["AttributeName"], k["KeyType"]) for k in t["KeySchema"]] == [("pk", "HASH"), ("sk", "RANGE")]
+        assert not t.get("GlobalSecondaryIndexes")
+    users, projects = tables.table("users"), tables.table("projects")
+    assert users.get_item(Key={"pk": f"USER#{user['id']}", "sk": "PROFILE"})["Item"]["email"] == "keys@x.io"
+    assert users.get_item(Key={"pk": "EMAIL#keys@x.io", "sk": "USER"})["Item"]["user_id"] == user["id"]
+    rec = projects.get_item(Key={"pk": f"PROJECT#{p['id']}", "sk": "META"})["Item"]
+    assert rec["app_id"] == "calculator"
+    assert projects.get_item(Key={"pk": "APP#calculator", "sk": "PROJECT"})["Item"]["project_id"] == p["id"]
+    owner = projects.get_item(Key={"pk": f"OWNER#{user['id']}", "sk": f"PROJECT#{rec['created_date']}#{p['id']}"})
+    assert owner["Item"]["project_id"] == p["id"]
     v = tables.table("versions").get_item(Key={"pk": f"PROJECT#{p['id']}", "sk": f"VERSION#{vid}"})["Item"]
     assert v["status"] == "ready" and v["version_id"] == vid
-    # items saved before pk/sk get their keys from their ids
+    # deleting frees the app id and leaves the owner's list; the record stays (soft delete)
+    api.ok("DELETE", f"/api/projects/{p['id']}", token=tok)
+    assert "Item" not in projects.get_item(Key={"pk": "APP#calculator", "sk": "PROJECT"})
+    assert api.ok("GET", "/api/projects", token=tok)["items"] == []
+    assert projects.get_item(Key={"pk": f"PROJECT#{p['id']}", "sk": "META"})["Item"]["deleted_date"]
+    # older records get their pointers (local_server.py), keyed items keep their keys
+    assert tables.pointers("users", {"user_id": "u1", "email": "a@b.c"}) == [{"pk": "EMAIL#a@b.c", "sk": "USER", "user_id": "u1"}]
     assert tables.keyed("versions", {"project_id": "a", "version_id": "b"})["sk"] == "VERSION#b"
+    assert tables.keyed("users", {"pk": "EMAIL#x", "sk": "USER", "user_id": "u"})["pk"] == "EMAIL#x"
+
+
+def test_one_account_per_email_and_one_project_per_app_id(api):
+    register(api, "same@x.io")
+    status, out, _ = api("POST", "/api/auth/register", {"email": "SAME@x.io", "password": "password123"})
+    assert status == 409 and out["error_code"] == "EMAIL_TAKEN"
+    tok, _ = register(api, "other@x.io")
+    api.ok("POST", "/api/projects", {"app_id": "weather", "name": "Weather"}, token=tok)
+    status, out, _ = api("POST", "/api/projects", {"app_id": "weather", "name": "Again"}, token=tok)
+    assert status == 409 and out["error_code"] == "APP_ID_TAKEN"
+    # a failed transaction leaves nothing behind: the developer still has one project
+    assert len(api.ok("GET", "/api/projects", token=tok)["items"]) == 1

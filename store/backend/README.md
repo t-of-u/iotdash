@@ -31,16 +31,22 @@ Deploying is `iotdash store deploy` (`../scripts/deploy.sh`, see `../README.md`)
 
 ## Tables (DynamoDB, on-demand)
 
-Every table: partition key `pk` (S), sort key `sk` (S). Items also keep their ids (`user_id`,
-`project_id`, `version_id`) as plain attributes; the answers and the indexes use those.
+Every table has only partition key `pk` (S) and sort key `sk` (S): no secondary indexes. A lookup
+by another value reads a pointer item, written in the same transaction as its record (with
+`attribute_not_exists`, so emails and live app ids stay unique). Records also keep their ids
+(`user_id`, `project_id`, `version_id`) as plain attributes for the answers.
 
-| table | `pk` | `sk` | indexes (projection ALL) |
+| table | `pk` | `sk` | item |
 |---|---|---|---|
-| `<prefix>users` | `USER#<user_id>` | `PROFILE` | `email-index`: `email` (S) |
-| `<prefix>projects` | `PROJECT#<project_id>` | `META` | `app_id-index`: `app_id` (S); `owner-index`: `owner_id` (S) + `created_date` (S) |
-| `<prefix>versions` | `PROJECT#<project_id>` | `VERSION#<version_id>` | — |
+| `<prefix>users` | `USER#<user_id>` | `PROFILE` | the account |
+| | `EMAIL#<email>` | `USER` | → `user_id` (sign-in) |
+| `<prefix>projects` | `PROJECT#<project_id>` | `META` | the project |
+| | `APP#<app_id>` | `PROJECT` | → `project_id` (boards; removed when the project is deleted) |
+| | `OWNER#<user_id>` | `PROJECT#<created>#<project_id>` | → `project_id` (a developer's projects, by age) |
+| `<prefix>versions` | `PROJECT#<project_id>` | `VERSION#<version_id>` | one uploaded package |
 
-`TABLE_PREFIX` is `<STORE_NAME>-` when deployed by `scripts/deploy.sh` (default `iotstore-`). Files:
+`TABLE_PREFIX` is `deploy.env`'s `TABLE_PREFIX`, or `<STORE_NAME>-`, when deployed by `scripts/deploy.sh`
+(the code's default is `iotstore-`). Files:
 bucket `S3_BUCKET_NAME`, keys `projects/<app_id>/<version_id>/package.idbz`, `icon.img`, `icon.png`.
 
 ## Settings (environment)
@@ -49,7 +55,8 @@ See `.env.example` and `IOTStore/libs/config.py`. On the Lambda (`scripts/deploy
 `deploy.env`): `JWT_SECRET_KEY`, `STORAGE=s3`, `S3_BUCKET_NAME`, `TABLE_PREFIX`, `CORS_ORIGIN` (the web
 app's origins, comma-separated), `STORE_NAME` (shown by the web app), `SIGNUP` (`open` or `closed`:
 only the first account, the admin), `ENV`, `BUILD_COMMIT`. The function's role needs DynamoDB
-Get/Put/Update/Delete/Query/Scan on the three tables (+ indexes) and S3 Get/Put/Delete on `projects/*`.
+Get/BatchGet/Put/Update/Delete/ConditionCheck/Query/Scan on the three tables (writes go in transactions) and
+S3 Get/Put/Delete on `projects/*`.
 
 ## Run it here
 

@@ -37,20 +37,24 @@ iotdash store deploy-web              # the web app in frontend/dist (uploaded w
 ```
 
 `scripts/deploy.sh` is safe to run again: it makes what is missing and updates the rest (new code,
-settings, CORS), keeping the token signing key. What it makes, all named after `STORE_NAME`:
+settings, CORS), keeping the token signing key. What it makes, named after `STORE_NAME` unless
+`deploy.env` sets `FUNCTION_NAME`, `TABLE_PREFIX` or `S3_BUCKET_NAME` (each run prints the names):
 
 | | |
 |---|---|
-| DynamoDB | `<name>-users`, `<name>-projects`, `<name>-versions` (on-demand; keys `pk` + `sk`, see `docs/API.md`) |
+| DynamoDB | `<TABLE_PREFIX>users`, `-projects`, `-versions` (default prefix `<name>-`; on-demand; keys `pk` + `sk`, see `docs/API.md`) |
 | S3 | `S3_BUCKET_NAME` (default `<name>-packages-<account id>`): private, CORS for `WEB_ORIGIN` |
-| IAM | `<name>-api-role`: logs, those three tables, that bucket |
-| Lambda | `<name>-api` + layer `<name>-deps`, a public function URL (the API) |
+| Lambda | `FUNCTION_NAME` (default `<name>-api`) + layer `<function>-deps`, a public function URL (the API) |
+| IAM | `<function>-role`: logs, those three tables, that bucket |
 
 Then:
 
-1. Serve `frontend/dist` from any static host. Unknown paths must fall back to `index.html` (S3
-   website: error document `index.html`; CloudFront: 403/404 → `/index.html`) and `.wasm` must be
-   `application/wasm`. Put its origin in `WEB_ORIGIN` and run `scripts/deploy.sh` again.
+1. The web app: with `WEB_BUCKET` set, `iotdash store deploy-web` makes that bucket a public S3
+   website (hosting on, `index.html` for every path, a read-only public policy, ACLs off; made when
+   missing), uploads `frontend/dist` and prints the URL; `iotdash store deploy` adds that address to
+   CORS. For HTTPS or your own domain put CloudFront in front, or use `WEB_HOSTING=private` and serve
+   the bucket yourself (unknown paths → `/index.html`, `.wasm` as `application/wasm`), adding that
+   origin to `WEB_ORIGIN`.
 2. Open the web app and create the first account: it becomes the store's admin. With `SIGNUP=closed`
    nobody else can sign up.
 3. Boards: **Apps** → *Store address* → the API's URL.

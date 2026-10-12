@@ -48,9 +48,14 @@ def _start_dynamo():
     if DUMP.exists():
         data = json.loads(DUMP.read_text(), parse_float=Decimal)
         for kind, items in data.items():
-            with tables.table(kind).batch_writer() as w:
+            items = [tables.keyed(kind, it) for it in items]  # items saved before pk/sk get keys
+            have = {(it["pk"], it["sk"]) for it in items}
+            for it in list(items):  # and records saved before pointers get theirs
+                if it["sk"] == tables.RECORD_SK.get(kind):
+                    items += [ptr for ptr in tables.pointers(kind, it) if (ptr["pk"], ptr["sk"]) not in have]
+            with tables.table(kind).batch_writer(overwrite_by_pkeys=["pk", "sk"]) as w:
                 for it in items:
-                    w.put_item(Item=tables.keyed(kind, it))  # also keys items saved before pk/sk
+                    w.put_item(Item=it)
         print(f"loaded {sum(len(v) for v in data.values())} items from {DUMP}")
     atexit.register(_save)
 

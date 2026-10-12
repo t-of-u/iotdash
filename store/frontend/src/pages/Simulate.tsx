@@ -14,7 +14,7 @@ interface Sim {
   scale(r: { kg: number; stable: boolean; overload: boolean; intervalMs?: number }): void; scalePower(on: boolean): void;
 }
 interface SimModule {
-  IotdashSim: new (o: { canvas: HTMLCanvasElement; base: string; onLog: (s: string) => void; onRadio: (n: string, s: unknown) => void; onTare: () => void }) => Sim;
+  IotdashSim: new (o: { canvas: HTMLCanvasElement; base: string; version?: string; onLog: (s: string) => void; onRadio: (n: string, s: unknown) => void; onTare: () => void }) => Sim;
   parseIdbz(b: ArrayBuffer): { manifest: { id: string; version: string; title?: string } };
   verifyIdbz(p: unknown): Promise<boolean>;
 }
@@ -62,13 +62,13 @@ export default function Simulate() {
       setV(ver);
       if (!ver.package_url) throw new Error('This version has no package to run');
       setStatus('Starting the engine…');
-      const mod = (await import(/* @vite-ignore */ `${ENGINE}iotdash-web.js`)) as SimModule;
+      const mod = (await import(/* @vite-ignore */ `${ENGINE}iotdash-web.js?v=${__BUILD_ID__}`)) as SimModule;
       const res = await fetch(ver.package_url);
       if (!res.ok) throw new Error(`The package cannot be downloaded (${res.status})`);
       const pkg = mod.parseIdbz(await res.arrayBuffer());
       await mod.verifyIdbz(pkg);
       s = new mod.IotdashSim({
-        canvas: screen.current!, base: ENGINE, onLog: log,
+        canvas: screen.current!, base: ENGINE, version: __BUILD_ID__, onLog: log,
         onRadio: (name, st) => {
           if (gone) return;
           if (name === 'wifi') setWifi(st as WifiState);

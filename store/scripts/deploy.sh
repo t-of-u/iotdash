@@ -7,42 +7,20 @@
 #   scripts/deploy.sh --dry-run           # only print the changes it would make (reads AWS)
 #   IOTSTORE_CONFIG=staging.env scripts/deploy.sh
 #
-# Makes, all named after STORE_NAME:
-#   DynamoDB  <name>-users, <name>-projects, <name>-versions (on-demand, keys pk + sk)
-#   S3        S3_BUCKET_NAME (private; CORS for WEB_ORIGIN; packages under projects/)
-#   IAM       <name>-api-role (logs, those tables, that bucket)
-#   Lambda    <name>-api (Python 3.13) + layer <name>-deps + a public function URL
+# Makes (names from STORE_NAME unless deploy.env sets them):
+#   DynamoDB  <TABLE_PREFIX>users, -projects, -versions (default prefix <name>-; on-demand, keys pk + sk only)
+#   S3        S3_BUCKET_NAME (default <name>-packages-<account>; private; CORS for WEB_ORIGIN)
+#   Lambda    FUNCTION_NAME (default <name>-api; Python 3.13) + layer <function>-deps + a public URL
+#   IAM       <function>-role (logs, those tables, that bucket)
 # The URL is printed and kept in .deploy/<name>.env (API_URL) for scripts/deploy-web.sh.
 set -euo pipefail
-root=$(cd "$(dirname "$0")/.." && pwd)
-CONF=${IOTSTORE_CONFIG:-$root/deploy.env}
-[ -f "$CONF" ] || { echo "no $CONF: cp deploy.env.example deploy.env, then edit it" >&2; exit 1; }
-load_env() {  # KEY=VALUE lines; values may have spaces, quotes optional; # lines and blanks skipped
-  local line key val
-  while IFS= read -r line || [ -n "$line" ]; do
-    case "$line" in '' | \#*) continue ;; esac
-    key=$(printf '%s' "${line%%=*}" | tr -d ' ')
-    val=$(printf '%s' "${line#*=}" | sed -e 's/^ *//' -e 's/ *$//' -e 's/^"\(.*\)"$/\1/' -e "s/^'\(.*\)'$/\1/")
-    export "$key=$val"
-  done < "$1"
-}
-load_env "$CONF"
-[ -n "${AWS_PROFILE:-}" ] || unset AWS_PROFILE  # empty = the default credentials (an empty value would make the CLI fail)
+# shellcheck source=_common.sh
+. "$(dirname "$0")/_common.sh"
 DRY=0
 [ "${1:-}" = "--dry-run" ] && DRY=1
-
-STORE_NAME=${STORE_NAME:-iotstore}
-REGION=${AWS_REGION:-ap-southeast-1}
-P="${STORE_NAME}-"
-FUNCTION="${STORE_NAME}-api"
-ROLE="${STORE_NAME}-api-role"
-LAYER="${STORE_NAME}-deps"
 backend="$root/backend"
-work="$root/.deploy"
-mkdir -p "$work"
 
-# read-only calls always run; changes only without --dry-run
-a() { aws --region "$REGION" ${AWS_PROFILE:+--profile "$AWS_PROFILE"} "$@"; }
+# read-only calls (a) always run; changes only without --dry-run
 change() {
   if [ $DRY = 1 ]; then echo "  would: aws $*" | cut -c1-160 >&2; else a "$@"; fi
 }
@@ -51,31 +29,30 @@ step() { echo "== $*"; }
 ACCOUNT=$(a sts get-caller-identity --query Account --output text)
 BUCKET=${S3_BUCKET_NAME:-${STORE_NAME}-packages-${ACCOUNT}}
 echo "store $STORE_NAME in account $ACCOUNT, $REGION$([ $DRY = 1 ] && echo ' (dry run)')"
+echo "  function $FUNCTION, tables ${P}users/projects/versions, bucket $BUCKET, role $ROLE, layer $LAYER"
 
 # ---------------------------------------------------------------- 1. tables
+# only pk + sk (strings), no secondary indexes: lookups use pointer items (backend/IOTStore/libs/tables.py)
 step "DynamoDB tables (${P}users, ${P}projects, ${P}versions)"
-make_table() {  # name, then the extra attribute definitions and the GSIs (JSON or empty)
-  local name=$1 attrs=$2 gsis=$3
-  if a dynamodb describe-table --table-name "$name" > /dev/null 2>&1; then
-    echo "  $name: exists"
+make_table() {
+  local name=$1 keys
+  if keys=$(a dynamodb describe-table --table-name "$name" --query 'Table.KeySchema[].[AttributeName,KeyType]' \
+      --output text 2>/dev/null); then
+    keys=$(echo "$keys" | tr '\t\n' ': ')
+    case "$keys" in
+      "pk:HASH sk:RANGE "*) echo "  $name: exists" ;;
+      *) echo "  $name exists with keys ${keys}but the store needs pk (HASH) + sk (RANGE), both strings" >&2; exit 1 ;;
+    esac
     return
   fi
-  # shellcheck disable=SC2086
   change dynamodb create-table --table-name "$name" --billing-mode PAY_PER_REQUEST \
     --key-schema AttributeName=pk,KeyType=HASH AttributeName=sk,KeyType=RANGE \
-    --attribute-definitions AttributeName=pk,AttributeType=S AttributeName=sk,AttributeType=S $attrs \
-    ${gsis:+--global-secondary-indexes "$gsis"} > /dev/null
+    --attribute-definitions AttributeName=pk,AttributeType=S AttributeName=sk,AttributeType=S > /dev/null
   [ $DRY = 1 ] || { a dynamodb wait table-exists --table-name "$name"; echo "  $name: created"; }
 }
-gsi() {  # index name, hash key [, range key]
-  local keys="{\"AttributeName\":\"$2\",\"KeyType\":\"HASH\"}"
-  [ -n "${3:-}" ] && keys="$keys,{\"AttributeName\":\"$3\",\"KeyType\":\"RANGE\"}"
-  echo "{\"IndexName\":\"$1\",\"KeySchema\":[$keys],\"Projection\":{\"ProjectionType\":\"ALL\"}}"
-}
-make_table "${P}users" "AttributeName=email,AttributeType=S" "[$(gsi email-index email)]"
-make_table "${P}projects" "AttributeName=app_id,AttributeType=S AttributeName=owner_id,AttributeType=S AttributeName=created_date,AttributeType=S" \
-  "[$(gsi app_id-index app_id),$(gsi owner-index owner_id created_date)]"
-make_table "${P}versions" "" ""
+make_table "${P}users"
+make_table "${P}projects"
+make_table "${P}versions"
 
 # ---------------------------------------------------------------- 2. bucket
 step "S3 bucket $BUCKET"
@@ -90,7 +67,9 @@ else
 fi
 change s3api put-public-access-block --bucket "$BUCKET" --public-access-block-configuration \
   BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true
-origins=$(echo "${WEB_ORIGIN:-*}" | tr ',' '\n' | sed 's/^ *//; s/ *$//; s#/$##' | grep -v '^$' | sed 's/.*/"&"/' | paste -sd, -)
+cors=$(web_origins | paste -sd, - | sed 's/,/, /g')  # WEB_ORIGIN + the S3 website when WEB_BUCKET hosts the app
+[ -n "$cors" ] || cors="*"
+origins=$(echo "$cors" | tr ',' '\n' | sed 's/^ *//' | sed 's/.*/"&"/' | paste -sd, -)
 cat > "$work/cors.json" <<EOF
 {"CORSRules": [{"AllowedOrigins": [$origins], "AllowedMethods": ["GET", "HEAD", "POST"],
   "AllowedHeaders": ["*"], "ExposeHeaders": ["ETag", "Content-Length"], "MaxAgeSeconds": 3600}]}
@@ -112,9 +91,9 @@ fi
 T="arn:aws:dynamodb:${REGION}:${ACCOUNT}:table/${P}"
 cat > "$work/policy.json" <<EOF
 {"Version": "2012-10-17", "Statement": [
-  {"Effect": "Allow", "Action": ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:UpdateItem", "dynamodb:DeleteItem",
-     "dynamodb:Query", "dynamodb:Scan", "dynamodb:BatchWriteItem"],
-   "Resource": ["${T}users", "${T}users/index/*", "${T}projects", "${T}projects/index/*", "${T}versions"]},
+  {"Effect": "Allow", "Action": ["dynamodb:GetItem", "dynamodb:BatchGetItem", "dynamodb:PutItem", "dynamodb:UpdateItem",
+     "dynamodb:DeleteItem", "dynamodb:ConditionCheckItem", "dynamodb:Query", "dynamodb:Scan", "dynamodb:BatchWriteItem"],
+   "Resource": ["${T}users", "${T}projects", "${T}versions"]},
   {"Effect": "Allow", "Action": ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"],
    "Resource": "arn:aws:s3:::${BUCKET}/projects/*"},
   {"Effect": "Allow", "Action": "s3:ListBucket", "Resource": "arn:aws:s3:::${BUCKET}"}]}
@@ -166,7 +145,7 @@ fi
 [ -n "$secret" ] || secret=$(openssl rand -hex 32)
 commit=$(git -C "$root" rev-parse --short HEAD 2>/dev/null || echo unknown)
 python3 "$root/scripts/_env_json.py" "$work/env.json" \
-  JWT_SECRET_KEY="$secret" STORAGE=s3 S3_BUCKET_NAME="$BUCKET" TABLE_PREFIX="$P" CORS_ORIGIN="${WEB_ORIGIN:-*}" \
+  JWT_SECRET_KEY="$secret" STORAGE=s3 S3_BUCKET_NAME="$BUCKET" TABLE_PREFIX="$P" CORS_ORIGIN="$cors" \
   STORE_NAME="${STORE_TITLE:-$STORE_NAME}" SIGNUP="${SIGNUP:-open}" ENV=PROD BUILD_COMMIT="$commit"
 if [ $exists = 0 ]; then
   change lambda create-function --function-name "$FUNCTION" --runtime python3.13 --architectures x86_64 \
@@ -175,10 +154,15 @@ if [ $exists = 0 ]; then
     --environment "file://$work/env.json" > /dev/null
   [ $DRY = 1 ] || { a lambda wait function-active-v2 --function-name "$FUNCTION"; echo "  created"; }
 else
+  # a function made elsewhere (e.g. in the console) gets the role with the store's permissions too
+  role_arn="arn:aws:iam::${ACCOUNT}:role/${ROLE}"
+  had=$(a lambda get-function-configuration --function-name "$FUNCTION" --query Role --output text)
+  [ "$had" = "$role_arn" ] || echo "  role: ${had##*/} -> $ROLE"
   change lambda update-function-code --function-name "$FUNCTION" --zip-file "fileb://$work/function.zip" > /dev/null
   [ $DRY = 1 ] || a lambda wait function-updated-v2 --function-name "$FUNCTION"
-  change lambda update-function-configuration --function-name "$FUNCTION" --runtime python3.13 \
-    --handler IOTStore.entry_points.IOTStore.main --layers "$LAYER_ARN" --environment "file://$work/env.json" > /dev/null
+  # memory and timeout too: a console-made function has 128 MB and 3 s, too little for bcrypt
+  change lambda update-function-configuration --function-name "$FUNCTION" --runtime python3.13 --role "$role_arn" \
+    --timeout 30 --memory-size 512 --handler IOTStore.entry_points.IOTStore.main --layers "$LAYER_ARN" --environment "file://$work/env.json" > /dev/null
   [ $DRY = 1 ] || { a lambda wait function-updated-v2 --function-name "$FUNCTION"; echo "  updated ($commit)"; }
 fi
 rm -f "$work/env.json"

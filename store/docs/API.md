@@ -87,14 +87,19 @@ Upload is two steps, the file goes straight to storage (S3 presigned POST, or th
 
 ## Tables (DynamoDB, on-demand)
 
-Every table: partition key `pk` (S), sort key `sk` (S). Items also keep their ids (`user_id`,
-`project_id`, `version_id`) as plain attributes; the answers and the indexes use those.
+Every table has only partition key `pk` (S) and sort key `sk` (S): no secondary indexes. A lookup
+by another value reads a pointer item, written in the same transaction as its record (with
+`attribute_not_exists`, so emails and live app ids stay unique). Records also keep their ids
+(`user_id`, `project_id`, `version_id`) as plain attributes for the answers.
 
-| table | `pk` | `sk` | indexes (projection ALL) |
+| table | `pk` | `sk` | item |
 |---|---|---|---|
-| `<prefix>users` | `USER#<user_id>` | `PROFILE` | `email-index`: `email` (S) |
-| `<prefix>projects` | `PROJECT#<project_id>` | `META` | `app_id-index`: `app_id` (S); `owner-index`: `owner_id` (S) + `created_date` (S) |
-| `<prefix>versions` | `PROJECT#<project_id>` | `VERSION#<version_id>` | — |
+| `<prefix>users` | `USER#<user_id>` | `PROFILE` | the account |
+| | `EMAIL#<email>` | `USER` | → `user_id` (sign-in) |
+| `<prefix>projects` | `PROJECT#<project_id>` | `META` | the project |
+| | `APP#<app_id>` | `PROJECT` | → `project_id` (boards; removed when the project is deleted) |
+| | `OWNER#<user_id>` | `PROJECT#<created>#<project_id>` | → `project_id` (a developer's projects, by age) |
+| `<prefix>versions` | `PROJECT#<project_id>` | `VERSION#<version_id>` | one uploaded package |
 
 Ids are time-ordered strings (13 digits of milliseconds + 10 hex), so `sk` order of a project's versions
 is upload order. `TABLE_PREFIX` (default `iotstore-`; `<STORE_NAME>-` from `scripts/deploy.sh`) or `TABLE_USERS` / `TABLE_PROJECTS` / `TABLE_VERSIONS`

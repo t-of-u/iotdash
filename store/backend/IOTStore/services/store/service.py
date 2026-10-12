@@ -3,7 +3,7 @@ The store as boards see it (public, no account): public projects with a publishe
 that runs on the board's OS, and the download link of a package.
 """
 
-from boto3.dynamodb.conditions import Attr, Key
+from boto3.dynamodb.conditions import Attr
 
 from ...libs import storage, tables
 from ...libs.exceptions import NotFound
@@ -29,9 +29,9 @@ class StoreService:
         return not os_version or version_le(v.get("os_min") or "0", os_version)
 
     def _project(self, app_id: str) -> dict:
-        items = tables.query_all(self.projects, IndexName="app_id-index", KeyConditionExpression=Key("app_id").eq(app_id))
-        p = next((p for p in items if _alive(p) and p.get("visibility", "public") == "public"), None)
-        if not p:
+        ptr = self.projects.get_item(Key=tables.app_key(app_id)).get("Item")
+        p = self.projects.get_item(Key=tables.project_key(ptr["project_id"])).get("Item") if ptr else None
+        if not _alive(p) or p.get("visibility", "public") != "public":
             raise NotFound(f"no app '{app_id}' in the store", "NO_APP")
         return p
 
@@ -51,7 +51,7 @@ class StoreService:
 
     def catalog(self, query: dict) -> dict:
         os_version = (query or {}).get("os", "")
-        projects = tables.scan_all(self.projects, FilterExpression=Attr("deleted_date").not_exists())
+        projects = tables.scan_all(self.projects, FilterExpression=tables.records("projects") & Attr("deleted_date").not_exists())
         items = []
         for p in projects:
             if p.get("visibility", "public") != "public":

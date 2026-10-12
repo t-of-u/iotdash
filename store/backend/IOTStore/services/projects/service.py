@@ -1,7 +1,8 @@
 """
 Projects (one app of the store) and their versions (one uploaded .idbz package each).
 
-    iotstore-projects  pk PROJECT#<id>, sk META; app_id-index (unique app ids), owner-index (a developer's projects)
+    iotstore-projects  PROJECT#<id>/META records; APP#<app_id> pointers (unique app ids), OWNER#<user> pointers
+                       (a developer's projects); see libs/tables.py
     iotstore-versions  pk PROJECT#<id>, sk VERSION#<version_id> (time-ordered: a reverse Query lists newest first)
 
 A developer sees and changes their own projects, an admin every project. Deletes are soft
@@ -11,7 +12,7 @@ A developer sees and changes their own projects, an admin every project. Deletes
 import hashlib
 import re
 
-from boto3.dynamodb.conditions import Attr, Key
+from boto3.dynamodb.conditions import Attr
 
 from ...libs import idbz, images, storage, tables
 from ...libs.exceptions import BadRequest, Conflict, NotFound, Validation
@@ -85,12 +86,11 @@ class ProjectsService:
 
     def list(self) -> dict:
         if self._is_admin():
-            items = tables.scan_all(self.projects, FilterExpression=Attr("deleted_date").not_exists())
-            items.sort(key=lambda p: p.get("created_date", ""), reverse=True)
+            items = tables.scan_all(self.projects, FilterExpression=tables.records("projects") & Attr("deleted_date").not_exists())
         else:
-            items = tables.query_all(self.projects, IndexName="owner-index",
-                                     KeyConditionExpression=Key("owner_id").eq(self.user["user_id"]),
-                                     ScanIndexForward=False, FilterExpression=Attr("deleted_date").not_exists())
+            ptrs = tables.query_all(self.projects, KeyConditionExpression=tables.projects_of(self.user["user_id"]))
+            items = [p for p in tables.get_many("projects", [tables.project_key(x["project_id"]) for x in ptrs]) if _alive(p)]
+        items.sort(key=lambda p: p.get("created_date", ""), reverse=True)
         return {"items": [self._view(p) for p in items]}
 
     def create(self, body: dict) -> dict:
@@ -102,15 +102,18 @@ class ProjectsService:
         visibility = text(body, "visibility", default="public")
         if visibility not in VISIBILITIES:
             raise BadRequest("visibility is public or private", "BAD_FIELD", {"visibility": "public|private"})
-        taken = tables.query_all(self.projects, IndexName="app_id-index", KeyConditionExpression=Key("app_id").eq(app_id))
-        if any(_alive(p) for p in taken):
-            raise Conflict(f"the app id '{app_id}' is taken", "APP_ID_TAKEN")
         now = tables.now()
         p = {"project_id": tables.new_id(), "app_id": app_id, "name": name,
              "description": text(body, "description", max_len=4000, default=""), "visibility": visibility,
              "owner_id": self.user["user_id"], "owner_name": self.user.get("name", ""), "installs": 0,
              "created_date": now, "updated_date": now}
-        self.projects.put_item(Item=tables.keyed("projects", p))
+        pid, owner = p["project_id"], p["owner_id"]
+        try:  # the project, its app id (one live project each) and its place in the owner's list, together
+            tables.transact(tables.put("projects", tables.keyed("projects", p), new=True),
+                            tables.put("projects", {**tables.app_key(app_id), "project_id": pid}, new=True),
+                            tables.put("projects", {**tables.owner_key(owner, now, pid), "project_id": pid}))
+        except tables.Taken:
+            raise Conflict(f"the app id '{app_id}' is taken", "APP_ID_TAKEN") from None
         return self._view(p, [])
 
     def get(self, project_id: str) -> dict:
@@ -137,8 +140,11 @@ class ProjectsService:
         return self._view(p)
 
     def delete(self, project_id: str) -> dict:
-        self._load(project_id)
-        self._set(self.projects, tables.project_key(project_id), {"deleted_date": tables.now()})
+        p = self._load(project_id)
+        # soft delete; the app id is free again and the project leaves its owner's list
+        tables.transact(tables.update("projects", tables.project_key(project_id), {"deleted_date": tables.now()}),
+                        tables.delete("projects", tables.app_key(p["app_id"]), only_if={"project_id": project_id}),
+                        tables.delete("projects", tables.owner_key(p["owner_id"], p["created_date"], project_id)))
         return {"deleted": True}
 
     # ---------------------------------------------------------------- versions

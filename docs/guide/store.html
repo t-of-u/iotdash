@@ -42,16 +42,16 @@ iotdash store deploy --dry-run   <span class="c"># ดูว่าจะสร�
 iotdash store deploy             <span class="c"># table, bucket + CORS, role, layer, Lambda, function URL: พิมพ์ URL ของ API</span>
 iotdash store deploy-web         <span class="c"># build เว็บ (และอัปโหลดขึ้น S3 ถ้าตั้ง WEB_BUCKET)</span></code></pre>
 <table>
-<tr><th>สร้าง</th><th>ชื่อ</th></tr>
-<tr><td>DynamoDB</td><td><code>&lt;STORE_NAME&gt;-users</code>, <code>-projects</code>, <code>-versions</code></td></tr>
+<tr><th>สร้าง</th><th>ชื่อ (ตั้งเองใน <code>deploy.env</code> ได้ ทุกรอบจะพิมพ์ชื่อที่ใช้)</th></tr>
+<tr><td>DynamoDB</td><td><code>&lt;TABLE_PREFIX&gt;users</code>, <code>-projects</code>, <code>-versions</code> (prefix เริ่มต้น <code>&lt;STORE_NAME&gt;-</code>)</td></tr>
 <tr><td>S3</td><td><code>S3_BUCKET_NAME</code> หรือ <code>&lt;STORE_NAME&gt;-packages-&lt;account id&gt;</code> (private, CORS ตาม <code>WEB_ORIGIN</code>)</td></tr>
-<tr><td>IAM</td><td><code>&lt;STORE_NAME&gt;-api-role</code></td></tr>
-<tr><td>Lambda</td><td><code>&lt;STORE_NAME&gt;-api</code> + layer <code>&lt;STORE_NAME&gt;-deps</code> + function URL</td></tr>
+<tr><td>Lambda</td><td><code>FUNCTION_NAME</code> (เริ่มต้น <code>&lt;STORE_NAME&gt;-api</code>) + layer <code>&lt;function&gt;-deps</code> + function URL</td></tr>
+<tr><td>IAM</td><td><code>&lt;function&gt;-role</code></td></tr>
 </table>
 <ul>
   <li>รันซ้ำได้: ที่ยังไม่มีจะถูกสร้าง ที่มีแล้วจะถูกอัปเดต (โค้ด, ค่าตั้ง, CORS) โดยเก็บ JWT key เดิม</li>
   <li>หลาย store ในบัญชีเดียว: config คนละไฟล์ที่ <code>STORE_NAME</code> ต่างกัน <code>iotdash store deploy --config staging.env</code></li>
-  <li>เว็บเป็นไฟล์ static (<code>store/frontend/dist</code>) host ที่ไหนก็ได้: path ที่ไม่มีต้องกลับไป <code>index.html</code> และ <code>.wasm</code> ต้องเป็น <code>application/wasm</code></li>
+  <li>เว็บ: ตั้ง <code>WEB_BUCKET</code> แล้ว <code>deploy-web</code> ทำ bucket นั้นเป็น S3 website ให้ครบ (เปิด hosting, ทุก path ไป <code>index.html</code>, policy อ่านได้แบบ public, ปิด ACL, สร้าง bucket ถ้ายังไม่มี) อัปโหลดแล้วพิมพ์ URL ส่วน <code>deploy</code> ใส่ URL นั้นใน CORS ให้เอง ถ้าจะใช้ HTTPS หรือโดเมนของตัวเองให้ใส่ CloudFront ข้างหน้า หรือ <code>WEB_HOSTING=private</code> แล้ว host เอง (path ที่ไม่มีกลับไป <code>index.html</code>, <code>.wasm</code> เป็น <code>application/wasm</code>)</li>
   <li><code>SIGNUP=closed</code>: สมัครได้เฉพาะบัญชีแรก (admin)</li>
 </ul>
 

@@ -1,8 +1,6 @@
-"""Developer accounts in iotstore-users (email-index for sign-in)."""
+"""Developer accounts in iotstore-users (USER# records, EMAIL# pointers for sign-in)."""
 
 import re
-
-from boto3.dynamodb.conditions import Key
 
 from ...libs import auth, tables
 from ...libs.config import signup_open
@@ -22,8 +20,8 @@ class AuthService:
         self.users = tables.table("users")
 
     def by_email(self, email: str):
-        items = tables.query_all(self.users, IndexName="email-index", KeyConditionExpression=Key("email").eq(email))
-        return items[0] if items else None
+        ptr = self.users.get_item(Key=tables.email_key(email)).get("Item")
+        return self.get(ptr["user_id"]) if ptr else None
 
     def get(self, user_id: str):
         return self.users.get_item(Key=tables.user_key(user_id)).get("Item")
@@ -36,14 +34,16 @@ class AuthService:
             raise BadRequest("email is not valid", "BAD_FIELD", {"email": "invalid"})
         if not isinstance(password, str) or len(password) < 8:
             raise BadRequest("password needs at least 8 characters", "BAD_FIELD", {"password": "min 8"})
-        if self.by_email(email):
-            raise Conflict("an account with this email exists", "EMAIL_TAKEN")
         first = not self.users.scan(Limit=1, ProjectionExpression="pk").get("Items")
         if not first and not signup_open():
             raise Forbidden("sign-up is closed on this store: ask its admin", "SIGNUP_CLOSED")
         user = {"user_id": tables.new_id(), "email": email, "name": name, "role": "admin" if first else "developer",
                 "password_hash": auth.hash_password(password), "created_date": tables.now(), "is_active": True}
-        self.users.put_item(Item=tables.keyed("users", user))
+        try:  # the account and its email pointer together: an email has one account
+            tables.transact(tables.put("users", tables.keyed("users", user), new=True),
+                            tables.put("users", {**tables.email_key(email), "user_id": user["user_id"]}, new=True))
+        except tables.Taken:
+            raise Conflict("an account with this email exists", "EMAIL_TAKEN") from None
         return {"user": public_user(user), **auth.tokens(user)}
 
     def login(self, body: dict) -> dict:
