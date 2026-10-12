@@ -62,6 +62,7 @@ sim/build/iotdash-sim APP/build/bundle.bin [--page x.html] [--script "…"] [--s
 <tr><td><code>regset KEY JSON</code></td><td>ตั้ง registry (เช่น <code>regset darkMode true</code>)</td></tr>
 <tr><td><code>appschanged ID</code></td><td>จำลอง frame <code>APPS_CHANGED</code></td></tr>
 <tr><td><code>reboot</code></td><td><code>Os::reloadSystem()</code></td></tr>
+<tr><td><code>kioskoff</code></td><td><code>Os::kioskReset()</code> (เหมือน <code>iotdash device kiosk-off</code>)</td></tr>
 <tr><td><code>ospage</code></td><td>พิมพ์แอป/หน้า/ความลึกของ stack ปัจจุบัน</td></tr>
 <tr><td><code>stats</code></td><td>fps, เวลา style/layout/paint/frame, damage</td></tr>
 <tr><td><code>bench [N=30]</code></td><td>วาดใหม่ทั้งจอ N ครั้ง พิมพ์ ms ต่อครั้ง</td></tr>

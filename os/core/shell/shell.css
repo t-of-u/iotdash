@@ -1,6 +1,6 @@
 /* System UI drawn over every page: the bottom bar (swipe up from the bottom edge), the system
    dialog and the "opening app" card. The OS toggles classes on .os-shell:
-   nav-open, modal-open, launching, no-cancel. */
+   nav-open, modal-open, launching, no-cancel, ask-pass (the dialog asks for a password). */
 
 .os-shell {
   position: fixed; left: 0; top: 0; width: 100vw; height: 100vh; z-index: 2147483000;
@@ -39,7 +39,8 @@
 .modal-open .os-dialog { transform: scale(1); }
 .os-title { font-size: 20px; font-weight: 600; margin-bottom: 8px; }
 .os-message { font-size: 16px; line-height: 1.45; color: #475569; }
-.os-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px; }
+.os-row { display: flex; align-items: center; gap: 10px; margin-top: 20px; }
+.os-actions { display: flex; justify-content: flex-end; gap: 10px; margin-left: auto; }
 .os-btn {
   min-width: 96px; height: 44px; padding: 0 18px; border-radius: 12px;
   display: flex; align-items: center; justify-content: center; font-size: 16px; font-weight: 600;
@@ -47,6 +48,19 @@
 .os-cancel { background: #e2e8f0; color: #0f172a; }
 .os-ok { background: #2563eb; color: #fff; }
 .no-cancel .os-cancel { display: none; }
+
+/* a password (kiosk mode): near the top, clear of the on-screen keyboard; field and buttons in a row */
+.os-pass { display: none; flex: 1; min-width: 0; position: relative; }
+.ask-pass .os-pass { display: block; }
+.ask-pass .os-modal { align-items: flex-start; padding-top: 18px; }
+.ask-pass .os-dialog { width: 620px; padding-bottom: 30px; }
+.ask-pass .os-row { margin-top: 14px; }
+.os-pass-input {
+  width: 100%; height: 48px; padding: 0 14px; border-radius: 12px; border: 1.5px solid #cbd5e1;
+  background: #f8fafc; font-family: Inter, sans-serif; font-size: 18px; color: #0f172a; outline: 0;
+}
+.os-pass-input:focus { border-color: #2563eb; background: #fff; }
+.os-pass-error { position: absolute; left: 2px; top: 53px; font-size: 14px; font-weight: 500; color: #dc2626; white-space: nowrap; }
 
 /* ---- opening an app */
 .os-launch {
@@ -78,4 +92,7 @@
   .os-cancel { background: #334155; color: #e2e8f0; }
   .os-modal { background: rgba(2, 6, 23, .6); }
   .os-launch-track { background: #334155; }
+  .os-pass-input { background: #0f172a; border-color: #334155; color: #e2e8f0; }
+  .os-pass-input:focus { background: #0f172a; border-color: #3b82f6; }
+  .os-pass-error { color: #f87171; }
 }

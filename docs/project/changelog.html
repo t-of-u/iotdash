@@ -161,6 +161,14 @@
   <li><b>store เป็นส่วนหนึ่งของ SDK</b>: ย้ายจาก <code>iotstore/</code> มาที่ <code>iotdash/store/</code> และสั่งผ่าน CLI: <code>iotdash store dev</code> (API + เว็บ), <code>test</code>, <code>deploy [--dry-run] [--config]</code>, <code>deploy-web</code>; <code>iotdash doctor</code> ตรวจเครื่องมือของ store ด้วย</li>
 </ul>
 
+<h2 id="kiosk">16. Kiosk mode <span class="tag">12 ต.ค. 2026</span></h2>
+<ul>
+  <li>แอป Apps: ปุ่ม ⋮ ข้าง Open → เมนู <i>Kiosk mode</i> → sheet ใส่รหัสผ่านสองครั้ง (อย่างน้อย 4 ตัว) → แอปนั้นเป็นหน้าจอเดียวของบอร์ด เปิดเองตอนเริ่มระบบ</li>
+  <li>OS (<code>lib/rt/os_kiosk.cpp</code>): Home, Back ที่หน้าแรก และ <code>os.home()</code> ถามรหัสผ่านผ่าน dialog ของระบบที่มีช่องรหัสผ่าน ("Wrong password" / Cancel / ถูก = ปิด kiosk แล้วกลับ home); เก็บ salt + SHA-256 ใน <code>secure.kiosk</code>; <code>os.kiosk.status/start</code></li>
+  <li>Engine: ช่องกรอกของ system UI (internal) ไม่ส่ง focus/blur/input/change/keydown ให้ script ของหน้า; <code>OsHooks::internalKey</code> ให้ OS รับ Enter; ระหว่าง dialog รหัสผ่าน touch ที่ไม่ใช่ของ dialog ไปที่ keyboard ของ engine</li>
+  <li>ลืมรหัสผ่าน: <code>iotdash device kiosk-off</code> (frame 19 <code>KIOSK_OFF</code>), ใน sim: <code>kioskoff</code></li>
+</ul>
+
 <h2 id="decisions">สรุปการตัดสินใจที่สำคัญ</h2>
 <table>
 <tr><th>การตัดสินใจ</th><th>เหตุผล</th><th>ราคาที่จ่าย</th></tr>

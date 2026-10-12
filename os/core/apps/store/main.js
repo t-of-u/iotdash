@@ -152,6 +152,10 @@ async function loadCatalog() {
   fetchIcons();
 }
 
+// Open, and the ⋮ menu next to it (kiosk mode)
+const openButtons = (id) => `<div class="btn" data-open="${esc(id)}">Open</div>` +
+  `<div class="more" data-more="${esc(id)}"><svg width="20" height="20" viewBox="0 0 24 24"><circle cx="12" cy="5" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="12" cy="19" r="1.8"/></svg></div>`;
+
 // ------------------------------------------------------------------ store list
 function storeAction(a) {
   const j = jobs[a.app_id];
@@ -160,7 +164,7 @@ function storeAction(a) {
   if (!l) return `<div class="btn primary" data-install="${esc(a.app_id)}">Install</div>`;
   const newer = vcmp(a.latest.version, l.version) > 0 || (l.source === 'store' && l.versionId && l.versionId !== a.latest.version_id && vcmp(a.latest.version, l.version) >= 0);
   if (newer) return `<div class="btn primary" data-install="${esc(a.app_id)}">Update</div>`;
-  return `<div class="btn" data-open="${esc(a.app_id)}">Open</div>`;
+  return openButtons(a.app_id);
 }
 function progress(id, j) {
   const pct = j.total ? Math.min(100, Math.round(j.got * 100 / j.total)) : 0;
@@ -199,7 +203,7 @@ function installedRow(l) {
     } else if (a && l.source !== 'store') {
       act += `<div class="btn subtle" data-install="${esc(l.id)}">Use store's</div>`;
     }
-    act += `<div class="btn" data-open="${esc(l.id)}">Open</div>`;
+    act += openButtons(l.id);
     act += `<div class="icon-btn" data-remove="${esc(l.id)}"><svg width="18" height="18" viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/></svg></div>`;
   }
   return `<div class="row app"${a ? ` data-detail="${esc(l.id)}"` : ''}>
@@ -286,6 +290,15 @@ async function remove(id) {
 document.addEventListener('click', (e) => {
   const t = e.target;
   let b;
+  if ((b = t.closest('[data-more]'))) return openMenu(b);
+  if ((b = t.closest('[data-kiosk]'))) {
+    closeMenu();
+    return openKiosk(b.dataset.kiosk);
+  }
+  if (!$('#menu').hidden) {  // a tap anywhere else closes the menu (and does only that)
+    closeMenu();
+    return;
+  }
   if ((b = t.closest('[data-install]'))) return install(b.dataset.install, b.dataset.version || '');
   if ((b = t.closest('[data-cancel]'))) {
     const id = b.dataset.cancel;
@@ -363,6 +376,72 @@ $('#dClose').addEventListener('click', () => {
 $('#detail').addEventListener('click', (e) => {
   if (e.target === $('#detail')) $('#dClose').click();
 });
+
+// ------------------------------------------------------------------ the ⋮ menu of an app
+let menuFor = '';
+function openMenu(btn) {
+  menuFor = btn.dataset.more;
+  const r = btn.getBoundingClientRect();
+  const m = $('#menu');
+  $('#menuKiosk').dataset.kiosk = menuFor;
+  m.style.top = `${Math.round(r.bottom + 6)}px`;
+  m.style.left = `${Math.round(Math.min(r.right - 220, 800 - 230))}px`;
+  m.hidden = false;
+}
+function closeMenu() {
+  $('#menu').hidden = true;
+  menuFor = '';
+}
+
+// ------------------------------------------------------------------ kiosk mode
+// The app becomes the board's only screen: the OS opens it at start-up, and leaving it asks for
+// this password (the right one turns kiosk mode off). The OS keeps a salted hash, not the password.
+let kioskFor = '';
+function openKiosk(id) {
+  const l = local.get(id);
+  kioskFor = id;
+  $('#kTitle').textContent = `Kiosk mode: ${l ? l.title : id}`;
+  $('#kSub').textContent = `The board opens ${l ? l.title : id} when it starts and keeps it on screen. ` +
+    'Leaving it (Home or Back) needs this password, which also turns kiosk mode off.';
+  $('#kPass').value = '';
+  $('#kPass2').value = '';
+  $('#kError').textContent = '';
+  $('#kioskSheet').hidden = false;
+  setTimeout(() => $('#kPass').focus(), 50);
+}
+function closeKiosk() {
+  $('#kPass').blur();
+  $('#kPass2').blur();
+  $('#kioskSheet').hidden = true;
+  kioskFor = '';
+}
+function startKiosk() {
+  const p1 = $('#kPass').value, p2 = $('#kPass2').value;
+  if (p1.length < 4) return void ($('#kError').textContent = 'The password needs 4 characters or more');
+  if (p1 !== p2) return void ($('#kError').textContent = 'The two passwords are not the same');
+  const id = kioskFor;
+  closeKiosk();
+  try {
+    os.kiosk.start(id, p1);  // the OS opens the app now
+  } catch (err) {
+    toast(err.message, true);
+  }
+}
+$('#kCancel').addEventListener('click', closeKiosk);
+$('#kStart').addEventListener('click', startKiosk);
+$('#kPass').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    $('#kPass2').focus();
+  }
+});
+$('#kPass2').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') startKiosk();
+});
+for (const id of ['kPass', 'kPass2']) {
+  $('#' + id).addEventListener('focus', () => $('#' + id).parentElement.classList.add('focus'));
+  $('#' + id).addEventListener('blur', () => $('#' + id).parentElement.classList.remove('focus'));
+}
 
 // ------------------------------------------------------------------ the store's address
 function openAddr() {

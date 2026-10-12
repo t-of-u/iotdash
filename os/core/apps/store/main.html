@@ -69,6 +69,29 @@
     <div class="in-error" id="addrError"></div>
   </div>
 </div>
+<!-- an app's ⋮ menu -->
+<div class="menu os-card" id="menu" hidden>
+  <div class="menu-item" id="menuKiosk" data-kiosk="">
+    <svg width="18" height="18" viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>
+    Kiosk mode
+  </div>
+</div>
+
+<!-- kiosk mode: the password that leaves it -->
+<div class="sheet-bg top" id="kioskSheet" hidden>
+  <div class="sheet os-card">
+    <div class="sheet-head">
+      <div class="text"><div class="sheet-title" id="kTitle"></div><div class="sheet-sub" id="kSub"></div></div>
+      <div class="x" id="kCancel"><svg width="20" height="20" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></div>
+    </div>
+    <div class="in-row">
+      <div class="in-field"><input type="password" id="kPass" placeholder="Password" autocomplete="off"></div>
+      <div class="in-field"><input type="password" id="kPass2" placeholder="Again" autocomplete="off"></div>
+      <div class="btn primary" id="kStart">Start</div>
+    </div>
+    <div class="in-error" id="kError"></div>
+  </div>
+</div>
 <div class="toast-wrap"><div class="toast" id="toast"></div></div>
 <script src="main.js"></script>
 </body>

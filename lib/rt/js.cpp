@@ -969,9 +969,18 @@ NATIVE(n_os) {
     return JS_TRUE;
   }
   if (op == "home") {
-    if (JS_ToBool(ctx, argv[1])) os->requestHome();
-    else os->home();
+    os->userHome(JS_ToBool(ctx, argv[1]));  // kiosk mode: the password first
     return JS_UNDEFINED;
+  }
+  if (op == "kiosk") {  // {app} while kiosk mode is on, else null
+    if (os->kioskApp().empty()) return JS_NULL;
+    JSValue o = JS_NewObject(ctx);
+    JS_SetPropertyStr(ctx, o, "app", jstr(ctx, os->kioskApp()));
+    return o;
+  }
+  if (op == "kioskStart") {
+    if (!os->kioskStart(str(ctx, argv[1]), str(ctx, argv[2]), err)) return throwMsg(ctx, err);
+    return JS_TRUE;
   }
   if (op == "back") {
     os->back();

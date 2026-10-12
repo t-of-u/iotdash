@@ -25,6 +25,7 @@ class DevLink {
     // OS card access: write (chunked), delete (recursive), mkdir, list (JSON), format, reload the system
     T_FS_WRITE = 12, T_FS_DELETE = 13, T_FS_MKDIR = 14, T_FS_LIST = 15, T_FS_FORMAT = 16, T_OS_RELOAD = 17,
     T_APPS_CHANGED = 18,
+    T_KIOSK_OFF = 19,  // kiosk mode off without its password (whoever has the board on USB)
     R_ACK = 0x81, R_SHOT = 0x82, R_TEXT = 0x83,
   };
   using Handler = std::function<void(uint8_t type, const uint8_t *data, size_t len)>;

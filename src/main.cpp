@@ -768,6 +768,12 @@ static void onLink(uint8_t type, const uint8_t *d, size_t n) {
       if (os) os->appsChanged(std::string((const char *)d, n));
       devlink.ack(type, true, "");
       break;
+    case DevLink::T_KIOSK_OFF: {  // a forgotten kiosk password: USB is physical access
+      std::string was = os ? os->kioskApp() : "";
+      if (os) os->kioskReset();
+      devlink.ack(type, os != nullptr, was.empty() ? "kiosk mode was off" : "kiosk mode off (was " + was + ")");
+      break;
+    }
     case DevLink::T_FILE:
     case DevLink::T_BUNDLE:
     case DevLink::T_COMMIT:

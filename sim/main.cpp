@@ -783,6 +783,9 @@ static void runScript(App &app, const std::string &script, const std::string &de
       is >> id;
       app.os->appsChanged(id);
       app.runFor(400);
+    } else if (cmd == "kioskoff" && app.os) {  // like `iotdash device kiosk-off` (a forgotten password)
+      app.os->kioskReset();
+      app.runFor(400);
     } else if (cmd == "reboot" && app.os) {
       app.os->reloadSystem();
       app.runFor(400);

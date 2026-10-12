@@ -867,12 +867,13 @@ uint64_t Widgets::nextWakeMs() const {
   return UINT64_MAX;
 }
 
+// events of the runtime's own fields (the system UI's) stay out of the page's scripts
 void Widgets::fireInput(Element *e) {
-  if (eng_.script()) eng_.script()->dispatch(e, "input", "", true, false);
+  if (eng_.script() && !isInternal(e)) eng_.script()->dispatch(e, "input", "", true, false);
 }
 
 void Widgets::fireChange(Element *e) {
-  if (eng_.script()) eng_.script()->dispatch(e, "change", "", true, false);
+  if (eng_.script() && !isInternal(e)) eng_.script()->dispatch(e, "change", "", true, false);
 }
 
 // ============================================================ text editing
@@ -1005,8 +1006,11 @@ void Widgets::typeText(const std::string &utf8) {
 
 void Widgets::key(const std::string &k) {
   Element *f = eng_.focused();
-  // a handler may cancel the key, or move the focus on (Enter as "next field")
-  if (eng_.script() && f && !eng_.script()->dispatch(f, "keydown", "{\"key\":\"" + k + "\"}", true, true)) return;
+  if (f && isInternal(f)) {  // a field of the system UI: its owner may take the key, the page never sees it
+    if (eng_.osHooks() && eng_.osHooks()->internalKey(f, k)) return;
+  } else if (eng_.script() && f && !eng_.script()->dispatch(f, "keydown", "{\"key\":\"" + k + "\"}", true, true)) {
+    return;  // a handler may cancel the key, or move the focus on (Enter as "next field")
+  }
   if (!f || eng_.focused() != f) return;
   if (k == "Backspace") backspace(f);
   else if (k == "ArrowLeft") moveCaret(f, -1);

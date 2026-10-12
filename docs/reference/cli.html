@@ -70,6 +70,7 @@ iotdash os ref --app examples/calculator --page app/pages/history/main.html --da
 <tr><td><code>iotdash device eval "JS"</code></td><td>รัน JS ในหน้าปัจจุบันและพิมพ์ผล</td></tr>
 <tr><td><code>iotdash device open ID</code></td><td>เปิดแอปตาม id</td></tr>
 <tr><td><code>iotdash device wifi "SSID:PASS"</code></td><td>ต่อ Wi-Fi ทันทีแบบเดียวกับ Settings: บันทึกลง registry (<code>secure.wifi</code>) เมื่อต่อได้ แล้วต่อเองทุกครั้งที่ boot ตอบ "connecting (saved once it is up)"</td></tr>
+<tr><td><code>iotdash device kiosk-off</code></td><td>ปิด <a href="../concepts/os.html#kiosk">kiosk mode</a> โดยไม่ต้องใช้รหัสผ่าน แล้วกลับ home (ลืมรหัสผ่าน: ใครถือสาย USB ก็คือเจ้าของเครื่อง)</td></tr>
 <tr><td><code>iotdash device reset</code></td><td><code>esp_restart()</code></td></tr>
 <tr><td><code>iotdash device tap X,Y</code></td><td>แตะจำลอง (DOWN แล้ว UP ห่าง 80 ms) ผ่านคิวเดียวกับนิ้วจริง</td></tr>
 <tr><td><code>iotdash device log [วินาที]</code></td><td>พิมพ์ log ของบอร์ด (ค่าเริ่มต้น 5 วินาที) ไม่รอ PING จึงเห็น log ตั้งแต่ boot</td></tr>

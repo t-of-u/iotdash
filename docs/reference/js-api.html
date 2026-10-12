@@ -96,7 +96,7 @@ document.getElementById('back').addEventListener('click', () =&gt; navigate(-1))
 <tr><td><code>os.page()</code></td><td><code>{id, title, version, icon, system, page, depth}</code>: <code>page</code> relative ต่อ root ของแอป, <code>depth</code> = ความลึกของ stack</td></tr>
 <tr><td><code>os.apps()</code></td><td>array ของ <code>{id, title, version, icon, system, source, versionId?, installed?}</code> (system app ก่อน แล้วแอปที่ติดตั้งเรียงตามชื่อ) <code>source</code>: <code>"system"</code>, <code>"store"</code>, <code>"usb"</code> หรือ <code>""</code> (ไม่มี <code>install.json</code>); <code>versionId</code> = version id ใน store; <code>installed</code> = unix วินาที</td></tr>
 <tr><td><code>os.launch(id)</code></td><td>เปิดแอป Throw: <code>"no app …"</code>, <code>"another app is opening"</code>, <code>"cannot read …"</code></td></tr>
-<tr><td><code>os.home(ask = true)</code></td><td>กลับ home; <code>ask</code> = ถาม "Close the app and go to the home screen?" ก่อน</td></tr>
+<tr><td><code>os.home(ask = true)</code></td><td>กลับ home; <code>ask</code> = ถาม "Close the app and go to the home screen?" ก่อน (ใน kiosk mode ถามรหัสผ่านเสมอ)</td></tr>
 <tr><td><code>os.back()</code></td><td>เหมือนปุ่ม back ของระบบ (หน้าแรก = ถามปิดแอป)</td></tr>
 <tr><td><code>os.confirm(title, message, {ok, cancel}?)</code></td><td>Promise&lt;boolean&gt; ของ dialog ระบบ <code>ok</code> ค่าเริ่มต้น "OK", <code>cancel</code> ค่าเริ่มต้น "Cancel" (<code>''</code> = ไม่มีปุ่ม cancel) ถ้าออกจากแอปขณะเปิดอยู่ จะ resolve <code>false</code></td></tr>
 <tr><td><code>os.alert(title, message)</code></td><td>Promise&lt;void&gt; dialog ปุ่มเดียว (แตะพื้นหลังเพื่อปิดได้)</td></tr>
@@ -107,6 +107,8 @@ document.getElementById('back').addEventListener('click', () =&gt; navigate(-1))
 <tr><td><code>os.theme()</code></td><td><code>"dark"</code> หรือ <code>"light"</code> ตาม registry</td></tr>
 <tr><td><code>os.sd.info()</code></td><td><code>{mounted, total, free, type, name}</code> (<code>type</code> = <code>"FLASH"</code> เมื่อใช้ flash ภายใน)</td></tr>
 <tr><td><code>os.sd.format()</code></td><td>system เท่านั้น: factory reset (ดู <a href="../concepts/os.html#factory-reset">iotdash OS</a>)</td></tr>
+<tr><td><code>os.kiosk.status()</code></td><td><code>{app}</code> ขณะเปิด <a href="../concepts/os.html#kiosk">kiosk mode</a> ไม่เช่นนั้น <code>null</code></td></tr>
+<tr><td><code>os.kiosk.start(id, password)</code></td><td>system เท่านั้น: ให้แอปที่ติดตั้งไว้เป็นหน้าจอเดียวของบอร์ดแล้วเปิดเลย <code>password</code> อย่างน้อย 4 ตัว (OS เก็บแค่ hash แบบมี salt) Throw: <code>"no installed app …"</code>, <code>"the password needs 4 characters or more"</code></td></tr>
 <tr><td><code>os.uninstall(id)</code></td><td>system เท่านั้น: ลบ <code>/applications/&lt;id&gt;</code> ทั้งโฟลเดอร์ Throw ถ้าแอปกำลังรัน</td></tr>
 <tr><td><code>os.store.install({id, url, version?, version_id?, store?, size?})</code></td><td>system เท่านั้น: ดาวน์โหลดแพ็กเกจ <a href="file-formats.html#idbz">IDBZ</a> จาก <code>url</code> ลงการ์ดทีละไฟล์ (ตรวจ SHA-256) แล้วแทนไฟล์ของแอป (ข้อมูลอยู่ครบ) Promise&lt;{id, version}&gt; Reject: <code>"app.idb: checksum mismatch (damaged download)"</code>, <code>"the download ended early"</code>, <code>"the server answered 404"</code>, <code>"the package is the app 'x', not 'y'"</code>, <code>"the app is open: close it first"</code>, <code>"not enough space for … KB"</code>, <code>"cancelled"</code></td></tr>
 <tr><td><code>os.store.cancel(id)</code></td><td>หยุดการติดตั้งที่กำลังดาวน์โหลด (ไฟล์เดิมไม่ถูกแตะ)</td></tr>

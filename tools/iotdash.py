@@ -706,7 +706,7 @@ BUNDLE_OFFSET = 0x400000
 PIO = str(Path.home() / ".platformio/penv/bin/pio")
 T_FILE, T_BUNDLE, T_COMMIT, T_EVAL, T_SHOT, T_STATS, T_PING, T_OPEN, T_WIFI, T_RESET, T_TOUCH = range(1, 12)
 # OS card access: write (chunked), delete (recursive), mkdir, list (JSON), format, reload the system
-T_FS_WRITE, T_FS_DELETE, T_FS_MKDIR, T_FS_LIST, T_FS_FORMAT, T_OS_RELOAD, T_APPS_CHANGED = range(12, 19)
+T_FS_WRITE, T_FS_DELETE, T_FS_MKDIR, T_FS_LIST, T_FS_FORMAT, T_OS_RELOAD, T_APPS_CHANGED, T_KIOSK_OFF = range(12, 20)
 R_ACK, R_SHOT, R_TEXT = 0x81, 0x82, 0x83
 
 
@@ -934,6 +934,9 @@ def cmd_device(args):
         print(r[2:].decode() if r else "timeout")
     elif args.what == "reset":
         link.send(T_RESET)
+    elif args.what == "kiosk-off":  # a forgotten kiosk password
+        r = link.request(T_KIOSK_OFF)
+        print(r[2:].decode() if r else "timeout")
     elif args.what == "tap":
         x, y = [int(v) for v in args.arg.split(",")]
         for ph in (0, 2):
@@ -995,7 +998,7 @@ def main():
     f = sub.add_parser("firmware", help="the board's firmware (PlatformIO): build, upload, monitor")
     f.add_argument("what", nargs="?", default="build", choices=["build", "upload", "monitor"])
     de = sub.add_parser("device", help="the board over USB (dev link)")
-    de.add_argument("what", choices=["shot", "stats", "eval", "open", "wifi", "reset", "tap", "log", "probe"])
+    de.add_argument("what", choices=["shot", "stats", "eval", "open", "wifi", "reset", "tap", "log", "probe", "kiosk-off"])
     de.add_argument("arg", nargs="?")
     de.add_argument("more", nargs="*", help="probe: more line settings")
     de.add_argument("-v", "--verbose", action="store_true")

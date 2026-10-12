@@ -135,6 +135,8 @@ struct OsHooks {
   virtual bool linkActivated(const std::string &url) = 0;  // true: handled as an in-app navigation
   virtual void tick(double nowMs) = 0;
   virtual std::shared_ptr<Image> image(const std::string &url) { (void)url; return nullptr; }  // "sd:/..." URLs
+  // a key in a text field of the system UI (internal); true: handled (e.g. Enter answers a dialog)
+  virtual bool internalKey(Element *field, const std::string &key) { (void)field; (void)key; return false; }
   virtual ~OsHooks() {}
 };
 

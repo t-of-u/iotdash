@@ -67,6 +67,18 @@ class Os : public OsHooks {
   // System dialog; done(true) for the OK button.
   void confirm(const std::string &title, const std::string &message, const std::string &ok, const std::string &cancel,
                std::function<void(bool)> done);
+  // The dialog with a password field (os_kiosk.cpp): check(password) true closes it, false shows
+  // "Wrong password" and asks again; Cancel closes it.
+  void askPassword(const std::string &title, const std::string &message, const std::string &ok,
+                   std::function<bool(const std::string &)> check);
+
+  // ---- kiosk mode (os_kiosk.cpp): one installed app is the board's only screen. It opens at
+  // start-up; leaving it (Home, Back on its first page, os.home()) asks for the password set with
+  // it, and the right one turns kiosk mode off. Registry: secure.kiosk {app, salt, hash}.
+  bool kioskStart(const std::string &id, const std::string &password, std::string &err);  // system only
+  const std::string &kioskApp() const { return kioskApp_; }  // "" = off
+  void userHome(bool ask);  // os.home() from a page: in kiosk mode, the password first
+  void kioskReset();        // off without the password, home screen (the USB link: a forgotten password)
 
   // ---- memory.json: localStorage of the running app (the system's for system pages)
   bool memGet(const std::string &k, std::string &out) const;
@@ -110,6 +122,7 @@ class Os : public OsHooks {
   bool linkActivated(const std::string &url) override;
   void tick(double nowMs) override;
   std::shared_ptr<Image> image(const std::string &url) override;
+  bool internalKey(Element *field, const std::string &key) override;
 
   // file helpers on host paths (POSIX; the card is mounted into the VFS on the device)
   static bool readFile(const std::string &path, std::string &out);
@@ -149,6 +162,20 @@ class Os : public OsHooks {
   void storeTick();
   void storeStop();  // the OS goes away: downloads cancelled, their answers dropped
   std::vector<std::shared_ptr<StoreJob>> storeJobs_;
+  // kiosk mode and the password form (os_kiosk.cpp)
+  void kioskLoad();    // the registry's secure.kiosk -> kioskApp_ ...
+  void kioskOff();
+  void kioskResume();  // open the kiosk app (start-up, after it was updated)
+  void kioskUnlock();  // the password, in front of the kiosk app
+  static std::string kioskDigest(const std::string &salt, const std::string &password);
+  void passShow();
+  void passClose();
+  void passSubmit();
+  std::string kioskApp_, kioskSalt_, kioskHash_;
+  Element *passInput_ = nullptr, *passError_ = nullptr;
+  bool modalPass_ = false;  // the dialog asks for a password
+  std::string passErrorText_;
+  std::function<bool(const std::string &)> passCheck_;
   // system UI
   void setShellClass();
   void showNav(bool on);

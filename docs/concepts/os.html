@@ -204,12 +204,24 @@
 <p>system app <b>Apps</b> (<code>os/core/apps/store/</code>) คุยกับ API ของ <a href="../guide/store.html">store</a> (<code>store/docs/API.md</code>) ที่อยู่ของ store เก็บใน registry <code>store.url</code> (ตั้งจากปุ่ม <i>Store address</i> ในแอป)</p>
 <ul>
   <li><b>Store</b>: <code>GET /api/store/apps?os=&lt;os.version&gt;</code> ได้แอปที่มีเวอร์ชัน published ซึ่ง <code>os_min</code> ไม่ใหม่กว่า OS นี้ เทียบกับ <code>os.apps()</code>: ยังไม่มี → Install, เวอร์ชันใน store ใหม่กว่า → Update, ไม่เช่นนั้น → Open แตะแถวเพื่อดูทุกเวอร์ชัน (วันที่, ขนาด, OS ขั้นต่ำ, release notes) และติดตั้งเวอร์ชันใดก็ได้ (Update / Go back / Reinstall)</li>
+  <li>ปุ่ม ⋮ ข้าง Open ของแต่ละแอป: เมนู <i>Kiosk mode</i> (<a href="#kiosk">ด้านล่าง</a>)</li>
   <li><b>Installed</b>: แอปบนการ์ดพร้อมป้ายที่มา <code>Store</code> / <code>USB</code> / <code>Card</code> จาก <code>install.json</code> (<a href="../reference/file-formats.html#json">format</a>), เวอร์ชัน, Update ถ้ามีใหม่กว่า, "Use store's" สำหรับแอปที่ลงผ่าน USB แต่มีใน store, Remove</li>
   <li>ติดตั้ง: <code>POST /api/store/apps/&lt;id&gt;/install</code> ได้ URL ของแพ็กเกจ (presigned) แล้ว <code>os.store.install()</code>: <code>Platform::download</code> ส่ง body ทีละชิ้นให้ <code>IdbzWriter</code> (<code>lib/rt/os_store.cpp</code>) บน thread ของ http เขียนแต่ละไฟล์ลง <code>/applications/.store-&lt;id&gt;/</code> พร้อม SHA-256; จบแล้วบน thread ของ engine ย้ายไฟล์แทนของเดิม (<code>app.idb</code> สุดท้าย), เขียน <code>install.json</code>, <code>appsChanged(id)</code> ล้มที่จุดใดก็ตาม ไฟล์เดิมของแอปไม่ถูกแตะ</li>
   <li>ความคืบหน้า: event <code>install</code> ทุก ~150 ms; ติดตั้งแอปที่กำลังเปิดอยู่ไม่ได้</li>
   <li>รายการล่าสุดและไอคอน (IMG1 จาก store) เก็บที่ <code>/system/data/store/</code> ใช้แสดงตอน offline</li>
 </ul>
 <p>บนบอร์ดจริง (flash ภายใน, Wi-Fi, backend ในเครื่อง Mac): แอปขนาด 481 KB อัปเดต 1.0 → 1.1 ใน 5.3 วินาที</p>
+
+<h2 id="kiosk">Kiosk mode</h2>
+<p>ให้แอปที่ติดตั้งไว้ตัวหนึ่งเป็นหน้าจอเดียวของบอร์ด (เช่นเครื่องชั่งหน้าร้าน) ตั้งจากแอป <b>Apps</b>: ปุ่ม ⋮ ข้าง Open → <i>Kiosk mode</i> → ใส่รหัสผ่านสองครั้ง → Start (<code>os.kiosk.start(id, password)</code>, <code>lib/rt/os_kiosk.cpp</code>)</p>
+<ul>
+  <li>แอปเปิดทันที และเปิดเองทุกครั้งที่ระบบเริ่ม (ต่อจาก home screen ที่ใช้เป็นฉากหลัง)</li>
+  <li>ทุกทางออกจากแอป: ปุ่ม Home ของแถบระบบ, Back ที่หน้าแรกของแอป, <code>os.home()</code> จากหน้าของแอป จะเปิด dialog ของระบบที่มีช่องรหัสผ่าน (ด้านบนจอ เหนือ keyboard) ผิด = "Wrong password" แล้วถามใหม่, Cancel = อยู่ในแอปต่อ, ถูก = <b>ปิด kiosk mode</b> แล้วกลับ home (เปิดใหม่ได้จาก Apps)</li>
+  <li>แอปถูกอัปเดตขณะเป็น kiosk: ระบบเปิดเวอร์ชันใหม่ให้เอง; แอปถูกลบ: kiosk mode ปิดเอง (ไม่มีอะไรให้ล็อก)</li>
+  <li>Registry <code>secure.kiosk</code> = <code>{app, salt, hash}</code> (hash = SHA-256 ของ salt + รหัสผ่าน, มองเห็นเฉพาะ system) factory reset ล้างไปพร้อม registry</li>
+  <li>ช่องรหัสผ่านอยู่ใน system UI (internal): ตัวอักษร, focus, Enter ไม่ถึง script ของแอป (<code>OsHooks::internalKey</code>) และระหว่างที่ dialog เปิด touch ที่ไม่ใช่ปุ่มของ dialog ไปถึง keyboard ของ engine เท่านั้น</li>
+  <li><b>ลืมรหัสผ่าน:</b> <code>iotdash device kiosk-off</code> ผ่าน USB (frame <code>KIOSK_OFF</code>) ปิด kiosk mode แล้วกลับ home</li>
+</ul>
 
 <h2 id="home">Home screen</h2>
 <ul>

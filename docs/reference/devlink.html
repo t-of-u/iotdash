@@ -47,6 +47,7 @@
 <tr><td>16</td><td>FS_FORMAT</td><td>–</td><td>format storage + สร้าง <code>/system/data</code>, <code>/applications</code></td></tr>
 <tr><td>17</td><td>OS_RELOAD</td><td>–</td><td>ACK "reloading" แล้ว <code>Os::reloadSystem()</code></td></tr>
 <tr><td>18</td><td>APPS_CHANGED</td><td>app id</td><td><code>Os::appsChanged(id)</code></td></tr>
+<tr><td>19</td><td>KIOSK_OFF</td><td>-</td><td><code>Os::kioskReset()</code>: kiosk mode ปิดโดยไม่ใช้รหัสผ่าน, กลับ home (<code>iotdash device kiosk-off</code>)</td></tr>
 </table>
 <p>path ของ FS_* เป็น path บนการ์ด (<code>/system/…</code>, <code>/applications/…</code>) และปฏิเสธถ้ามี <code>..</code> หรือไม่มี storage ("no card")</p>
 <h3>บอร์ด → คอมพิวเตอร์</h3>

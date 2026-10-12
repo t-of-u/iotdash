@@ -13,6 +13,7 @@
 //                   processes(), theme(), sd.info(), sd.format() (system), uninstall(id) (system)
 //   os.net / os.wifi / os.bt   connectivity: internet state, WiFi networks, Bluetooth LE devices
 //   os.store        install apps from the store (system apps only)
+//   os.kiosk        kiosk mode: one app as the board's only screen (start: system apps only)
 'use strict';
 const G = globalThis;
 
@@ -210,4 +211,13 @@ G.os.store = {
   download: (url, path) => net('store.download', {url: String(url), path: String(path)}),
   // {id, state: 'downloading' | 'installed' | 'failed', got, total, error}
   on: (fn) => G.os.on('install', fn),
+};
+
+// ------------------------------------------------------------------ kiosk mode
+// One installed app becomes the board's only screen: it opens at start-up, and leaving it (Home,
+// Back on its first page, os.home()) asks for the password given here; the right password turns
+// kiosk mode off. The OS keeps only a salted hash of the password.
+G.os.kiosk = {
+  status: () => N.os('kiosk'),  // {app} while on, else null
+  start: (id, password) => N.os('kioskStart', String(id), String(password)),  // opens the app
 };

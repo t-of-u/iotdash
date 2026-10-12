@@ -624,12 +624,12 @@ void Engine::focus(Element *e) {
   styleDirty_ = true;
   frameRequested_ = true;
   widgets_->focusChanged(old, e);
-  if (js_) {
-    if (old && old->connected()) {
+  if (js_) {  // the system UI's own fields (internal) are not the page's business
+    if (old && old->connected() && !widgets_->isInternal(old)) {
       js_->dispatch(old, "blur", "", false, false);
       js_->dispatch(old, "focusout", "", true, false);
     }
-    if (e) {
+    if (e && !widgets_->isInternal(e)) {
       js_->dispatch(e, "focus", "", false, false);
       js_->dispatch(e, "focusin", "", true, false);
     }

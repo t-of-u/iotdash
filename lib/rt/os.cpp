@@ -184,6 +184,7 @@ void Os::startSystem() {
   state_ = RUNNING;
   plat_.log(("os: system " + sysHash_ + " up").c_str());
   enter(homeApp(), TR_FADE);
+  if (!kioskApp_.empty()) kioskResume();  // kiosk mode: the app is the way in
 }
 
 // ============================================================ apps
@@ -312,6 +313,7 @@ void Os::home() {
 
 void Os::requestHome() {
   if (!inApp()) return;
+  if (!kioskApp_.empty()) return kioskUnlock();  // kiosk mode: the password, not a question
   confirm(app_.title, "Close the app and go to the home screen?", "Close", "Cancel", [this](bool ok) {
     if (ok) home();
   });
@@ -352,6 +354,7 @@ void Os::appsChanged(const std::string &id) {
   if (state_ != RUNNING) return;
   if (!id.empty() && inApp() && app_.id == id) {
     home();  // replaced or removed under it
+    if (id == kioskApp_) deferred_.push_back([this]() { kioskResume(); });  // kiosk: back into the new one
     return;
   }
   js_.busEmit("apps", "{\"id\":" + jsonStr(id) + "}");
@@ -362,6 +365,7 @@ void Os::appsChanged(const std::string &id) {
 void Os::enter(const OsApp &app, TransitionKind tr) {
   if (modalOpen_) {  // a question of the app being left stays unanswered (cancel)
     modalOpen_ = false;
+    if (modalPass_) passClose();
     if (modalDone_) {
       auto done = std::move(modalDone_);
       modalDone_ = nullptr;
@@ -597,7 +601,10 @@ bool Os::regClear(std::string &err) {
   return true;
 }
 
-void Os::applyRegistry() { eng_.setDarkMode(regGet("darkMode") == "true"); }
+void Os::applyRegistry() {
+  eng_.setDarkMode(regGet("darkMode") == "true");
+  kioskLoad();
+}
 
 // ============================================================ card
 
@@ -636,7 +643,7 @@ bool Os::sdFormat(std::string &err) {
 // ============================================================ system UI
 
 void Os::documentReady(Document *doc) {
-  shell_ = title_ = message_ = okBtn_ = cancelBtn_ = launchLabel_ = launchBar_ = nullptr;
+  shell_ = title_ = message_ = okBtn_ = cancelBtn_ = launchLabel_ = launchBar_ = passInput_ = passError_ = nullptr;
   if (state_ != RUNNING || !doc || !doc->html) return;
   std::string html = eng_.bundle().text("system/shell/shell.html");
   if (html.empty()) return;
@@ -652,6 +659,8 @@ void Os::documentReady(Document *doc) {
       else if (e->hasClass(intern("os-cancel"))) cancelBtn_ = e;
       else if (e->hasClass(intern("os-launch-label"))) launchLabel_ = e;
       else if (e->hasClass(intern("os-launch-bar"))) launchBar_ = e;
+      else if (e->hasClass(intern("os-pass-input"))) passInput_ = e;
+      else if (e->hasClass(intern("os-pass-error"))) passError_ = e;
     });
     doc->html->appendChild(root);
     shell_ = root;
@@ -668,6 +677,7 @@ void Os::documentReady(Document *doc) {
   setText(okBtn_, modalOk_);
   setText(cancelBtn_, modalCancel_);
   if (launching_) setText(launchLabel_, loadingApp_.title);
+  if (modalOpen_ && modalPass_) passShow();  // the password form survives too (empty)
   setShellClass();
 }
 
@@ -678,6 +688,7 @@ void Os::setShellClass() {
   if (modalOpen_) c += " modal-open";
   if (launching_) c += " launching";
   if (modalCancel_.empty()) c += " no-cancel";
+  if (modalOpen_ && modalPass_) c += " ask-pass";
   shell_->setAttr(A.class_, c);
 }
 
@@ -693,6 +704,7 @@ void Os::confirm(const std::string &title, const std::string &message, const std
     auto prev = std::move(modalDone_);
     prev(false);
   }
+  if (modalPass_) passClose();
   modalTitle_ = title;
   modalMessage_ = message;
   modalOk_ = ok.empty() ? "OK" : ok;
@@ -729,6 +741,13 @@ Element *Os::shellHit(float x, float y, std::string &action) const {
 }
 
 void Os::action(const std::string &what) {
+  if (modalPass_ && (what == "ok" || what == "cancel")) {
+    if (what == "ok") return passSubmit();
+    passClose();  // Cancel: stay where we are
+    modalOpen_ = false;
+    setShellClass();
+    return;
+  }
   if (what == "ok" || what == "cancel" || what == "dismiss") {
     if (what == "dismiss" && !modalCancel_.empty()) return;  // a tap outside does not answer a question
     modalOpen_ = false;
@@ -777,7 +796,7 @@ bool Os::pointer(int id, PointerPhase phase, float x, float y) {
     }
     return true;
   }
-  if (exclusive) return true;
+  if (exclusive) return !modalPass_;  // the password form types with the engine's keyboard (above the dialog)
   (void)onBar;
   // swipe up from the bottom edge shows the system bar (inside apps)
   if (phase == PTR_DOWN && inApp() && y >= eng_.display().height() - kEdge) {

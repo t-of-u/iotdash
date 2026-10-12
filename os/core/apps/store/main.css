@@ -111,3 +111,15 @@ code { font-family: JetBrains Mono, monospace; font-size: 12px; padding: 1px 5px
 .toast { max-width: 520px; padding: 10px 18px; border-radius: 12px; background: #0f172a; color: #fff; font-size: 15px; opacity: 0; transform: translateY(8px); transition: opacity .2s, transform .2s; }
 .toast.show { opacity: 1; transform: none; }
 .toast.bad { background: var(--danger); }
+
+/* the ⋮ button next to Open, and its menu */
+.more { width: 36px; height: 36px; border-radius: 18px; flex: none; display: flex; align-items: center; justify-content: center; color: var(--muted); }
+.more svg { fill: currentColor; }
+.more:active { background: var(--surface-2); }
+.menu { position: fixed; width: 220px; padding: 6px; z-index: 15; }
+.menu[hidden] { display: none; }
+.menu-item { height: 44px; padding: 0 12px; border-radius: 10px; display: flex; align-items: center; gap: 12px; font-size: 16px; font-weight: 500; color: var(--text); }
+.menu-item svg { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; color: var(--muted); }
+.menu-item:active { background: var(--surface-2); }
+#kioskSheet .sheet { width: 640px; }
+#kioskSheet .in-row .btn { width: 104px; }
